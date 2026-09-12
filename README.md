@@ -222,6 +222,11 @@ displayed maths is laid out the same way and must not be caught by this; what
 separates them is words. A table's cells carry them, a formula's pieces do not,
 so a row needs two cells with a real word in them before it counts as a table.
 
+A row is also *highlighted* as the one band it occupies, like a displayed
+formula — a box per cell leaves the row in pieces with the column gaps cut out
+of it. At line size a cell is still a line of its own, for stepping through a
+row one entry at a time.
+
 **Page furniture.** Running heads and page numbers are dropped, but only when
 all of a margin position, a body-sized font, a short line — or a line with no
 lower-case letter in it, since a running head is often capitals and can run

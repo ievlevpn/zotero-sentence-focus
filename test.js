@@ -1065,6 +1065,30 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 		{ text: "A further line of prose closes the page below the table here.", x: 82, y: 592, para: true },
 	]);
 
+	// The row is one band, not a box per cell with the column gaps cut out.
+	const rowUnits = segmentPage(layout([
+		{ text: "The three chains are compared in the table below, which follows here.", x: 82, y: 740, para: true },
+		{ text: "Each row gives the state space, the moves and the cost of one chain.", x: 82, y: 726, para: true },
+		...row(700, [["state space", 200], ["moves", 330], ["irreducible?", 400], ["cost/step", 500]]),
+		...row(680, [["Alg. 1 (Section 3)", 60], ["«Ω»~n~", 200], ["«A»~j~«A»~i~", 330], ["hypothesis", 400], ["«O»(«n»~2~) tests", 500]]),
+		...row(660, [["Alg. 3 (Algorithm 4.4)", 60], ["«⊔»~m~(«Ω»~m~)", 200], ["«A»~i~", 330], ["theorem", 400], ["«O»(«n») tests", 500]]),
+		{ text: "TABLE 2. The three chains. All three are reversible with the correct law.", x: 82, y: 620, para: true },
+		{ text: "They differ in whether irreducibility is assumed or proved in each case.", x: 82, y: 606, para: true },
+		{ text: "A further line of prose closes the page below the table here.", x: 82, y: 592, para: true },
+	]), VIEW).sentence;
+	const alg3Unit = rowUnits.find((u) => u.text.includes("Alg. 3"));
+	assert.strictEqual(alg3Unit.rects.length, 1, "the row is one band, not a box per cell");
+	assert.ok(alg3Unit.rects[0][0] <= 61 && alg3Unit.rects[0][2] >= 530,
+		"and the band runs the width of the row");
+	// A cell is still a line of its own, for stepping through one at a time.
+	const cells = segmentPage(layout([
+		...row(700, [["state space", 200], ["moves", 330], ["irreducible?", 400], ["cost/step", 500]]),
+		...row(680, [["Alg. 1 (Section 3)", 60], ["«Ω»~n~", 200], ["«A»~j~«A»~i~", 330], ["hypothesis", 400], ["«O»(«n»~2~) tests", 500]]),
+		...row(660, [["Alg. 3 (Algorithm 4.4)", 60], ["«⊔»~m~(«Ω»~m~)", 200], ["«A»~i~", 330], ["theorem", 400], ["«O»(«n») tests", 500]]),
+		{ text: "TABLE 2. The three chains are reversible with the correct law here.", x: 82, y: 620, para: true },
+	]), VIEW).line;
+	assert.ok(cells.some((u) => u.text === "theorem"), "a cell is a line at line size");
+
 	const alg3 = units.find((u) => u.includes("Alg. 3"));
 	assert.ok(alg3, `the row is a unit: got ${JSON.stringify(units)}`);
 	assert.ok(alg3.includes("theorem") && alg3.includes("tests"),

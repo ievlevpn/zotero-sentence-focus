@@ -770,7 +770,7 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 			cur = null;
 			continue;
 		}
-		if (!cur) { cur = { kind: "text", lines: [] }; blocks.push(cur); }
+		if (!cur) { cur = { kind: "text", lines: [], tableRow: ln.tableRow }; blocks.push(cur); }
 		cur.lines.push(ln);
 		const rowContinues = ln.tableRow !== undefined && next && next.tableRow === ln.tableRow;
 		if (ln.paraEnd && !bridgeAfter && !rowContinues) cur = null;
@@ -1257,9 +1257,13 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 			paragraph: [[0, text.length]],
 		};
 		for (const g of GRANULARITIES) {
-			// Stepping word by word through a formula still wants the tokens
-			// boxed individually; at every larger size the formula is one area.
-			const wholeArea = block.kind === "display" && g !== "word";
+			// A displayed formula and a row of table cells are both read as one
+			// thing, so both are highlighted as the one area they occupy — a
+			// box per cell leaves the row in pieces with the column gaps cut
+			// out of it. Stepping word by word still wants the tokens boxed
+			// individually, and at line size a cell is a line of its own.
+			const oneThing = block.kind === "display" || block.tableRow !== undefined;
+			const wholeArea = oneThing && g !== "word" && g !== "line";
 			for (const [a, b] of ranges[g]) {
 				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea);
 				if (unit) out[g].push(unit);
