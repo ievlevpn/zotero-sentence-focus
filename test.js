@@ -241,6 +241,30 @@ assert.deepStrictEqual(texts([
 // "holds.12 The" would read as a decimal without masking the raised marker.
 assert.deepStrictEqual(texts([{ text: "The bound holds.^12^ The rest is routine.", para: true }]),
 	["The bound holds.", "The rest is routine."]);
+assert.deepStrictEqual(texts([{ text: "This is due to Riesz^3^ and was later extended.", para: true }]),
+	["This is due to Riesz  and was later extended."]);
+assert.deepStrictEqual(texts([{ text: "This is shown in (see the survey)^4^ and extended.", para: true }]),
+	["This is shown in (see the survey)  and extended."]);
+
+// An exponent is small and raised as well, and its digits come from the roman
+// text font — but it is attached to a variable, or sits in a script with one.
+// Masked as a marker it vanished from the text and put a hole in the highlight.
+{
+	const CM = "JMEJAK+NewPXMI";
+	for (const [line, expected] of [
+		["Consider «U»^«k»+1^ «=» «U»^«k»^ «−» «ωS»(«U»^«k»^). Every step is fine.", "Consider Uk+1 = Uk − ωS(Uk)."],
+		["For «a»/«h»^2^ «+» «c» with «c» ≥ 0, compute it. Next.", "For a/h2 + c with c ≥ 0, compute it."],
+		["Here x^2^ is the square of the variable. Next.", "Here x2 is the square of the variable."],
+		["Take («a» «+» «b»)^2^ as the bound. Next.", "Take (a + b)2 as the bound."],
+	]) {
+		const units = segmentPage(layout([{ text: line, size: 10.9, mathFont: CM, para: true }]), VIEW).sentence;
+		assert.strictEqual(units[0].text, expected);
+		assert.strictEqual(units[0].rects.length, 1, `no hole in the highlight of ${JSON.stringify(expected)}`);
+	}
+	// ...and a real marker in mid-sentence is left out of the text, not the line.
+	const units = segmentPage(layout([{ text: "This is due to Riesz^3^ and was later extended.", para: true }]), VIEW).sentence;
+	assert.strictEqual(units[0].rects.length, 1, "stepping over a footnote marker leaves no hole");
+}
 
 // --- list labels and references --------------------------------------------
 

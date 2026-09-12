@@ -496,15 +496,49 @@ function markEquationNumber(chars, line) {
 // Footnote and citation markers ("...holds.12 The next") read to a splitter as
 // a decimal point. They are small, raised, and not part of a formula. Masking
 // them out of the text is Zotero's own trick for its read-aloud segmentation.
+//
+// An exponent is small and raised too, and its digits are set in the roman
+// text font — `h²`, `U^{k+1}` — so the font does not tell it from a marker.
+// What does is what it is attached to: a marker follows a word or a stop, an
+// exponent follows a variable or sits in a script with a variable or an
+// operator in it.
 function markSuperscripts(chars, line) {
+	const raised = (ch) => ch.size <= 0.85 * line.size && ch.baseline >= line.baseline + 0.15 * line.size;
 	for (let i = line.from; i <= line.to; i++) {
 		const ch = chars[i];
 		if (ch.math) continue;
 		if (!/[\d*†‡§¶]/.test(ch.c)) continue;
-		if (ch.size > 0.85 * line.size) continue;
-		if (ch.baseline < line.baseline + 0.15 * line.size) continue;
+		if (!raised(ch)) continue;
+		if (isExponent(chars, line, i, raised)) continue;
 		ch.marker = true;
 	}
+}
+
+function isExponent(chars, line, i, raised) {
+	let a = i, b = i;
+	while (a > line.from && raised(chars[a - 1]) && !chars[a - 1].space) a--;
+	while (b < line.to && !chars[b].space && raised(chars[b + 1])) b++;
+	for (let k = a; k <= b; k++) {
+		const c = chars[k];
+		if (c.math || /[\p{L}+−=<>()]/u.test(c.c)) return true;
+	}
+	if (a === line.from || chars[a - 1].space) return false;
+	const base = chars[a - 1];
+	if (base.math) return true;
+	// A variable set in the text font: one letter standing on its own.
+	if (!/\p{L}/u.test(base.c) || base.c.length > 1) return /[)\]|]/.test(base.c) && hasMathBefore(chars, line, a - 1);
+	const before = a - 2 >= line.from ? chars[a - 2] : null;
+	return !before || before.space || !/\p{L}/u.test(before.c);
+}
+
+// A closing bracket that closes a formula — `(a+b)²` — rather than a remark.
+function hasMathBefore(chars, line, close) {
+	for (let k = close - 1; k >= line.from && k >= close - 40; k--) {
+		const c = chars[k];
+		if (/[(\[|]/.test(c.c)) return false;
+		if (c.math || RELATION_RE.test(c.c) || /[+−]/.test(c.c)) return true;
+	}
+	return false;
 }
 
 // --- page geometry ---------------------------------------------------------
@@ -1181,7 +1215,14 @@ function rectsForChars(chars, idx) {
 		if (run) {
 			const prev = chars[run.last];
 			const gap = ch.rect[0] - prev.rect[2];
-			const broke = prev.lineEnd || i !== run.last + 1 || ch.rot !== prev.rot
+			// A footnote marker is left out of the text but not out of the
+			// line: stepping over one must not put a hole in the highlight.
+			let skipped = true;
+			for (let j = run.last + 1; j < i; j++) {
+				const between = chars[j];
+				if (!(between.marker || between.skip || /^\s*$/.test(between.c))) { skipped = false; break; }
+			}
+			const broke = prev.lineEnd || i <= run.last || !skipped || ch.rot !== prev.rot
 				|| gap > Math.max(1.2 * prev.size, 10) || gap < -prev.size;
 			if (broke) flush();
 		}

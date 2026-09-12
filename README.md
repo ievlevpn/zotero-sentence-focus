@@ -218,6 +218,14 @@ of the work is in throwing candidates out:
 | `... and then` | an ellipsis not followed by a capital |
 | `[12] Smith, J. A. Some paper.` | a bibliography entry, kept whole |
 
+A footnote marker is masked out of the text, but an **exponent** must not be:
+its digits come from the roman text font too — `h²`, `U^{k+1}` — so small,
+raised and not in a maths font describes both. What separates them is what the
+raised digits are attached to. A marker follows a word, a stop or a remark in
+brackets; an exponent follows a variable, closes a bracketed formula, or shares
+its script with a letter or an operator. A glyph that is masked still belongs
+to the line, so the highlight steps over it rather than leaving a hole.
+
 A candidate must also be followed by a **space**. Without one the full stop is
 part of a word — `math.PR`, a file name, a version string — however much the
 next character looks like the start of a sentence.
