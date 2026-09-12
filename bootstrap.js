@@ -417,6 +417,12 @@ function detectColumns(lines, viewBox) {
 	const full = () => tighten([{ left: x0, right: x1 }], lines) || [{ left: x0, right: x1 }];
 	if (span <= 0 || lines.length < 6) return full();
 
+	// Text set at another angle keeps its own company: a stamp printed down the
+	// margin is eighteen points wide and most of the page tall, and reading it
+	// as part of the text would drag the measure out to the paper's edge.
+	lines = lines.filter((ln) => !ln.rot);
+	if (lines.length < 6) return full();
+
 	const BINS = 100;
 	const cov = new Uint8Array(BINS);
 	for (const ln of lines) {
@@ -601,7 +607,7 @@ function displayRows(lines) {
 	const rows = [];
 	for (const line of lines) {
 		if (line.furniture || line.kind !== "display") continue;
-		rows.push({ col: line.col, rect: line.rect.slice(), size: line.size });
+		rows.push({ col: line.col, rot: line.rot, rect: line.rect.slice(), size: line.size });
 	}
 	let merged = true;
 	while (merged) {
@@ -609,7 +615,7 @@ function displayRows(lines) {
 		for (let i = rows.length - 1; i > 0 && !merged; i--) {
 			for (let j = i - 1; j >= 0; j--) {
 				const a = rows[j], b = rows[i];
-				if (a.col !== b.col) continue;
+				if (a.col !== b.col || a.rot !== b.rot) continue;
 				const gap = Math.max(a.rect[1], b.rect[1]) - Math.min(a.rect[3], b.rect[3]);
 				if (gap > 1.6 * Math.max(a.size, b.size)) continue;
 				a.rect = [
@@ -659,7 +665,7 @@ function absorbDisplayRows(lines) {
 			if (height <= 0) continue;
 			const centre = (line.rect[1] + line.rect[3]) / 2;
 			for (const row of rows) {
-				if (row.col !== line.col) continue;
+				if (row.col !== line.col || row.rot !== line.rot) continue;
 				// Horizontally inside the row, not merely touching it.
 				const inside = Math.min(row.rect[2], line.rect[2]) - Math.max(row.rect[0], line.rect[0]);
 				if (inside < 0.7 * Math.min(width, row.rect[2] - row.rect[0])) continue;
@@ -701,10 +707,14 @@ function markTableRows(lines) {
 		let row = null;
 		for (const candidate of rows) {
 			if (candidate.col !== line.col) continue;
+			if (candidate.rot !== line.rot) continue;
 			const overlap = Math.min(candidate.rect[3], line.rect[3]) - Math.max(candidate.rect[1], line.rect[1]);
-			if (overlap > 0.5 * Math.min(height, candidate.rect[3] - candidate.rect[1])) { row = candidate; break; }
+			// Measured against the taller of the two, so that a stamp printed
+			// down the margin — as tall as the page and overlapping the band of
+			// nearly every line on it — gathers nothing.
+			if (overlap > 0.5 * Math.max(height, candidate.rect[3] - candidate.rect[1])) { row = candidate; break; }
 		}
-		if (!row) { rows.push({ col: line.col, rect: line.rect.slice(), members: [line] }); continue; }
+		if (!row) { rows.push({ col: line.col, rot: line.rot, rect: line.rect.slice(), members: [line] }); continue; }
 		row.rect[1] = Math.min(row.rect[1], line.rect[1]);
 		row.rect[3] = Math.max(row.rect[3], line.rect[3]);
 		row.members.push(line);
@@ -762,6 +772,8 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 		// meets the prose — otherwise the sentence is cut into the part before
 		// the formula, the formula, and the part after, which is the opposite
 		// of what the setting asks for.
+		// Text set at another angle is its own thing entirely.
+		if (cur && previous && previous.rot !== ln.rot) cur = null;
 		// A row of cells is one thing and the row under it is another, whatever
 		// the layout says about paragraphs — table rows carry no full stops
 		// and often no paragraph breaks either.
@@ -831,6 +843,7 @@ function joinContinuations(blocks, typicalGap) {
 	for (let i = blocks.length - 1; i > 0; i--) {
 		const b = blocks[i], a = blocks[i - 1];
 		if (a.kind !== "text") continue;
+		if (a.lines[0] && b.lines[0] && a.lines[0].rot !== b.lines[0].rot) continue;
 		const at = a.lines.map((l) => l.text).join(" ").trim();
 		const bt = (b.lines[0] || { text: "" }).text.trim();
 		if (!at || !bt) continue;
@@ -947,6 +960,11 @@ function isBoundary(text, i, end, math, lineStarts) {
 	// The glyph itself may come from a text font even in maths, so a period
 	// flanked by formula on both sides counts as formula too.
 	if (math[i] || (math[i - 1] && math[end])) return false;
+
+	// A sentence ends and another begins with a space between them. Without
+	// one this is an identifier — "math.PR", a file name, a version — however
+	// much the character after it looks like the start of a sentence.
+	if (end < text.length && !/\s/.test(text[end])) return false;
 
 	let j = end;
 	while (j < text.length && /\s/.test(text[j])) j++;

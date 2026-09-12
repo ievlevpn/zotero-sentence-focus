@@ -15,6 +15,7 @@
 //   { mathFont }  the font the «...» glyphs claim to be in, for papers whose
 //          maths is not set in Computer Modern
 //   ~n~    a subscript: smaller and lowered, as a real index is
+//   { rot: 90 }  the line runs down the page, as an arXiv stamp does
 
 const assert = require("assert");
 const {
@@ -39,6 +40,10 @@ function layout(lines, viewBox = VIEW) {
 		let fragStart = chars.length;
 		const frags = [];
 		let math = !!ln.math, sup = false, sub = false, group = null, dy = 0;
+		// { rot: 90 } sets the line down the page instead of across it, which
+		// is how an arXiv stamp is printed in the margin.
+		const vertical = ln.rot === 90;
+		let pen = y;
 
 		// Zotero hands back a ligature as ONE glyph whose `c` is several
 		// characters ("ffi"), covered by a single rect.
@@ -46,6 +51,17 @@ function layout(lines, viewBox = VIEW) {
 			const sz = (sup || sub) ? size * 0.6 : size;
 			const w = sz * 0.5 * (text.length > 1 ? text.length * 0.7 : 1);
 			const off = (sup ? 0.35 * size : sub ? -0.2 * size : 0) + dy;
+			if (vertical) {
+				chars.push({
+					c: text,
+					rect: [x, pen - w, x + sz * 0.9, pen],
+					fontSize: sz, fontName: math ? (ln.mathFont || MATH_FONT) : TEXT_FONT,
+					bold: !!ln.bold, italic: math, baseline: pen, rotation: 90,
+					spaceAfter: false, lineBreakAfter: false, paragraphBreakAfter: false, ignorable: false,
+				});
+				pen -= w;
+				return;
+			}
 			chars.push({
 				c: text,
 				rect: [x, y - 0.2 * sz + off, x + w, y + 0.7 * sz + off],
@@ -1489,5 +1505,48 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 	const item3 = units.find((u) => u.text.startsWith("(3) compute"));
 	assert.ok(item3.text.endsWith("the matrix exponential;"), "the clause keeps its tail");
 }
+
+
+
+// --- a stamp printed down the margin ----------------------------------------
+
+// An arXiv stamp runs down the left-hand margin: eighteen points wide and the
+// better part of the page tall. Its band therefore overlaps the band of nearly
+// every line on the page, and anything that gathers lines by overlap will
+// gather the whole page into one. Rows are lines of comparable height standing
+// side by side, and text set at a different angle is not on a row at all.
+{
+	const PAGE = [0, 0, 595, 842];
+	const units = segmentPage(layout([
+		{ text: "arXiv:2412.01645v2 [math.PR] 14 Dec 2024", x: 18, y: 614, size: 20, rot: 90 },
+		{ text: "Konstantinos Dareiotis, Mate Gerencser, Khoa Le, Chengcheng Ling", x: 104, y: 580, size: 12, para: true },
+		{ text: "Abstract", x: 104, y: 550, para: true },
+		{ text: "The aim of the paper is to show the well-posedness of rough differential", x: 104, y: 533, size: 10, para: true },
+		{ text: "equations with distributional drifts driven by a Gaussian rough path lift.", x: 104, y: 521, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+
+	const authors = units.find((u) => u.text.startsWith("Konstantinos"));
+	assert.ok(authors, `the authors are a unit: got ${JSON.stringify(units.map((u) => u.text.slice(0, 26)))}`);
+	assert.ok(!authors.text.includes("Abstract"), "and are not swept up with the abstract");
+	assert.ok(units.some((u) => u.text === "Abstract"), "which stands on its own");
+	assert.ok(units.some((u) => u.text.startsWith("The aim")), "as does the abstract");
+
+	// The stamp is its own unit, and its box is the narrow strip it occupies.
+	const stamp = units.find((u) => u.text.includes("arXiv"));
+	assert.ok(stamp, "the stamp is read as its own unit");
+	assert.ok(stamp.rects[0][2] - stamp.rects[0][0] < 60, "boxed to the margin it is printed in");
+	// ...and it does not drag the measure of the page out to the margin.
+	assert.ok(authors.rects[0][0] > 60, `the text keeps its own margin: got ${authors.rects[0][0].toFixed(0)}`);
+}
+
+
+
+// A full stop is followed by a space. Without one it is part of a word — an
+// arXiv category, a file name, a version string — however much the next
+// character looks like the start of a sentence.
+assert.deepStrictEqual(texts([{ text: "It was filed under math.PR in 2024. Nothing else followed.", para: true }]),
+	["It was filed under math.PR in 2024.", "Nothing else followed."]);
+assert.deepStrictEqual(texts([{ text: "See config.Settings for the details. Then restart.", para: true }]),
+	["See config.Settings for the details.", "Then restart."]);
 
 console.log("all tests passed");

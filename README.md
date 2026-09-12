@@ -193,6 +193,10 @@ of the work is in throwing candidates out:
 | `... and then` | an ellipsis not followed by a capital |
 | `[12] Smith, J. A. Some paper.` | a bibliography entry, kept whole |
 
+A candidate must also be followed by a **space**. Without one the full stop is
+part of a word — `math.PR`, a file name, a version string — however much the
+next character looks like the start of a sentence.
+
 A candidate that survives all of those still has to be followed by something
 that opens a sentence — a capital, a digit, an opening bracket or quote, or a
 formula. `Appendix A. We now conclude.` breaks; `J. R. Smith` does not.
@@ -223,6 +227,16 @@ heading then arrives glued to the end of the previous paragraph, and the only
 thing left distinguishing it is the vertical gap. So a jump well beyond the
 page's normal line spacing ends a block whatever Zotero said. Without this the
 ruler drags `1.2.` along behind the last sentence of the section above it.
+
+**Text at another angle.** An arXiv stamp runs down the left-hand margin —
+eighteen points wide and most of the page tall — so its band overlaps the band
+of nearly every line on the page. Anything that gathers lines by vertical
+overlap will gather the whole page into one around it, and anything that
+measures the text's margin will measure it out to the paper's edge. Text set at
+a different angle therefore keeps its own company: it shares no block, no row
+and no column with the text of the page, and rows are gathered from lines of
+*comparable* height — overlap measured against the taller of the two, not the
+shorter.
 
 **Columns.** Found from vertical whitespace: bin the x axis, look for a run of
 empty bins away from the margins, and cut there. Two constraints keep that
