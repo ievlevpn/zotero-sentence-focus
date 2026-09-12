@@ -1180,4 +1180,83 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 	pageCache.clear();
 }
 
+
+
+// --- a table whose row arrives as one line ----------------------------------
+
+// A row's cells need not arrive as separate pieces: where the layout sees one
+// baseline it gives one line, cells and all. The wide gaps between columns are
+// then internal to the line, and splitting boxes at them cuts the row up.
+// Several of those gaps on one line is what a table looks like; one of them is
+// the run up to an equation number.
+{
+	const units = segmentPage(layout([
+		{ text: "The three chains are compared in the table below, which follows here.", x: 82, y: 740, para: true },
+		{ text: "Each row gives the state space, the moves and the cost of one chain.", x: 82, y: 726, para: true },
+		{ text: "Alg. 1 (Section 3)        On        AjAi        hypothesis        O(n2) tests", x: 105, y: 700 },
+		{ text: "Alg. 2 (Algorithm 4.2)    On        AjAi        hypothesis        O(n2) tests", x: 105, y: 686 },
+		{ text: "Alg. 3 (Algorithm 4.4)    Om        Ai          theorem           O(n) tests", x: 105, y: 672, para: true },
+		{ text: "Table 2. The three chains, all reversible with the correct conditional law.", x: 118, y: 640, para: true },
+		{ text: "They differ in whether irreducibility is assumed or proved in each case.", x: 118, y: 626, para: true },
+	]), VIEW).sentence;
+
+	const rows = units.filter((u) => u.text.startsWith("Alg."));
+	assert.strictEqual(rows.length, 3, `each row is its own unit: got ${JSON.stringify(units.map((u) => u.text.slice(0, 24)))}`);
+	for (const row of rows) {
+		assert.strictEqual(row.rects.length, 1, `a row is one band: ${JSON.stringify(row.text.slice(0, 30))}`);
+	}
+	assert.ok(units.some((u) => u.text.startsWith("Table 2.")), "the caption is read as prose");
+}
+
+// --- a line above a displayed formula ---------------------------------------
+
+// Absorbing into a formula's row goes by position, so the line above a display
+// is within reach of it. A fraction's numerator is, and belongs there; the tail
+// of a sentence is not. What separates them is that a formula's pieces carry no
+// words at all.
+{
+	const CM = "UVFEFX+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "(3) compute «q»(«X», «X»′) by (18) and «U»(«X»′) by (23), since (23) is not an identity for", x: 89, y: 660 },
+		{ text: "the matrix exponential;", x: 108, y: 647, para: true },
+		{ text: "(4) set «X»~t+1~ «=» «X»′ with probability min{1, «e»«−β»(«U»(«X»′)«−U»(«X»~t~))}", x: 89, y: 628, mathFont: CM, para: true },
+		{ text: "(5) if «X»~t+1~ «∈» «Ω»~n~, output it.", x: 89, y: 600, para: true, mathFont: CM },
+	]), VIEW).sentence;
+	const item3 = units.find((u) => u.text.startsWith("(3) compute"));
+	assert.ok(item3.text.endsWith("the matrix exponential;"),
+		`the clause keeps its tail: got ${JSON.stringify(item3.text.slice(-40))}`);
+	assert.ok(!units.some((u) => u.text.includes("exponential; (4)")), "which is not pulled into the formula below");
+}
+
+
+
+// A table of bare numbers has no words and no full stops anywhere in it, so
+// nothing but the shape of the rows separates one from the next.
+{
+	const rows = ["20 1 30 1", "24 1 24 1", "26 1 21 1", "28 2 18–20 2", "30 3 17–20 3"];
+	const page = [{ text: "Some prose above the table to set the column margins here.", x: 82, y: 740, para: true }];
+	rows.forEach((r, i) => page.push({ text: r.replace(/ /g, "        "), x: 184, y: 700 - i * 15 }));
+	page.push({ text: "Table 3. Exhaustive data for the order-eight potential here.", x: 118, y: 700 - rows.length * 15 - 20, para: true });
+
+	const units = segmentPage(layout(page), VIEW).sentence;
+	const numeric = units.filter((u) => /^\d/.test(u.text));
+	assert.strictEqual(numeric.length, rows.length, `each row of figures is a unit: got ${numeric.length}`);
+	for (const row of numeric) assert.strictEqual(row.rects.length, 1, "and one band");
+	// They must not be swept into a formula either, having no words to protect them.
+	assert.ok(!units.some((u) => u.kind === "display"), "a table of figures is not a formula");
+}
+
+// One wide gap is not a table: it is the run up to an equation number.
+{
+	const CM = "UVFEFX+CMMI10";
+	const all = segmentPage(layout([
+		{ text: "We therefore obtain the following bound on the quantity of interest.", x: 82, y: 700, para: true },
+		{ text: "«E»[«X»] «=» 0,                                   (7)", x: 200, y: 680, mathFont: CM, para: true },
+		{ text: "which finishes the argument and closes this section of the paper.", x: 82, y: 660, para: true },
+		{ text: "A further line of prose to establish the column margins here.", x: 82, y: 646, para: true },
+	]), VIEW).sentence;
+	assert.ok(all.some((u) => u.kind === "display"), "a formula with an equation number is still a formula");
+	assert.ok(!all.some((u) => u.text.includes("(7)")), "and the number is still dropped");
+}
+
 console.log("all tests passed");

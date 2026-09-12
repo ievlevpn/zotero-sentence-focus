@@ -335,8 +335,18 @@ function makeLine(chars, from, to) {
 		ir[3] = rect[3];
 	}
 
+	// Columns of a table show up as wide gaps inside one line, because where
+	// the layout sees one baseline it gives one line, cells and all. Several
+	// such gaps is a row; one of them is the run up to an equation number, and
+	// justified prose never stretches a word space this far.
+	let wideGaps = 0;
+	for (let i = from + 1; i <= to; i++) {
+		if (chars[i].rect[0] - chars[i - 1].rect[2] > 2.5 * size) wideGaps++;
+	}
+
 	const line = {
-		from, to, text, rect, size, baseline,
+		from, to, text, rect, size, baseline, wideGaps,
+		tabular: wideGaps >= 2,
 		mathFrac: mathCount / glyphs,
 		variableFrac,
 		formulaFrac: Math.max(mathCount / glyphs, variableFrac),
@@ -612,7 +622,11 @@ function absorbDisplayRows(lines) {
 	for (let pass = 0; pass < lines.length; pass++) {
 		let absorbed = false;
 		for (const line of lines) {
-			if (line.furniture || line.kind === "display" || line.textWords >= 4) continue;
+			// Position alone reaches a line above or below the row, which is right
+		// for a fraction's numerator and wrong for the tail of a sentence. A
+		// piece of a formula carries no words — an operator name like `min`
+		// does not count as one — so that is what is asked for here.
+		if (line.furniture || line.kind === "display" || line.textWords > 0) continue;
 			const height = line.rect[3] - line.rect[1];
 			const width = line.rect[2] - line.rect[0];
 			if (height <= 0) continue;
@@ -721,6 +735,10 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 		// meets the prose — otherwise the sentence is cut into the part before
 		// the formula, the formula, and the part after, which is the opposite
 		// of what the setting asks for.
+		// A row of cells is one thing and the row under it is another, whatever
+		// the layout says about paragraphs — table rows carry no full stops
+		// and often no paragraph breaks either.
+		if (cur && (ln.tabular || previous && previous.tabular)) cur = null;
 		// Cells of one table row are one line; the row after it is another.
 		if (cur && previous && previous.tableRow !== ln.tableRow) cur = null;
 		const inRow = ln.tableRow !== undefined && previous && previous.tableRow === ln.tableRow;
@@ -770,7 +788,7 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 			cur = null;
 			continue;
 		}
-		if (!cur) { cur = { kind: "text", lines: [], tableRow: ln.tableRow }; blocks.push(cur); }
+		if (!cur) { cur = { kind: "text", lines: [], tableRow: ln.tableRow, tabular: ln.tabular }; blocks.push(cur); }
 		cur.lines.push(ln);
 		const rowContinues = ln.tableRow !== undefined && next && next.tableRow === ln.tableRow;
 		if (ln.paraEnd && !bridgeAfter && !rowContinues) cur = null;
@@ -1262,7 +1280,7 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 			// box per cell leaves the row in pieces with the column gaps cut
 			// out of it. Stepping word by word still wants the tokens boxed
 			// individually, and at line size a cell is a line of its own.
-			const oneThing = block.kind === "display" || block.tableRow !== undefined;
+			const oneThing = block.kind === "display" || block.tableRow !== undefined || block.tabular;
 			const wholeArea = oneThing && g !== "word" && g !== "line";
 			for (const [a, b] of ranges[g]) {
 				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea);

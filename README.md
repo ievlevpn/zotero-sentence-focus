@@ -123,6 +123,12 @@ reach, so that repeats until nothing more moves. A double sum with limits
 stacked under both signs and a fraction after each arrives in thirteen pieces
 and comes out as one.
 
+Position alone reaches the line *above* the row as well as the pieces in it,
+which is right for a fraction's numerator and wrong for the tail of a sentence.
+So a line is only taken if it carries **no words at all** — an operator name
+like `min` not counting as one. Anything with a word in it is prose, whatever
+it overlaps.
+
 Getting there needs the row, not the pieces. A display line reaches the plugin
 in fragments — two equations set side by side, the tail after a summation sign,
 the limit beneath it — and a fragment judged on its own can go wrong:
@@ -215,12 +221,24 @@ under a list item is set in from the label exactly as the item's continuation
 is, and reads as a formula just as that does; what a continuation does not have
 is the space above it that sets a display apart from the text.
 
-**Tables.** A row arrives as one piece per cell, spread right across the
-measure, and read a cell at a time it says nothing — *theorem*, then *O(n)
-tests*. A row of cells is therefore one line, highlighted as one. A row of
-displayed maths is laid out the same way and must not be caught by this; what
-separates them is words. A table's cells carry them, a formula's pieces do not,
-so a row needs two cells with a real word in them before it counts as a table.
+**Tables.** A row reaches the plugin in one of two shapes. Sometimes it is one
+piece per cell, spread right across the measure, and read a cell at a time it
+says nothing — *theorem*, then *O(n) tests*. Sometimes the layout sees a single
+baseline and hands over the whole row as **one line**, cells and all, with the
+column gaps internal to it.
+
+Both are one line and are highlighted as the one band they occupy. The first is
+found by clustering pieces that share a band; the second by counting the wide
+gaps *inside* a line — several of them is a row, one of them is the run up to
+an equation number, and justified prose never stretches a word space that far.
+A row is also a block of its own: a table carries no full stops and often no
+paragraph breaks either, so without that a whole table of figures reads as one
+sentence.
+
+A row of displayed maths is laid out like a table row and must not be caught by
+this; where the pieces are separate, what separates them is words. A table's
+cells carry them, a formula's pieces do not, so a row needs two cells with a
+real word in them before it counts as a table.
 
 A row is also *highlighted* as the one band it occupies, like a displayed
 formula — a box per cell leaves the row in pieces with the column gaps cut out
