@@ -1449,4 +1449,45 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 	assert.ok(formula.rects[0][3] > 570, "but still covers the numerator");
 }
 
+
+
+// --- a limit that is spelled out in words -----------------------------------
+
+// The set an infimum is taken over can be written in English — "a(·)
+// admissible from x" — and sits under the operator as a limit. Carrying words,
+// it reads as prose and cuts the formula in half. What marks it as part of the
+// formula is its size: a limit is set in script type, a sentence is not.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const units = segmentPage(layout([
+		{ text: "exists and remains in K for all t ≥ 0. The infinite-horizon value is", x: 52, y: 348, para: true },
+		{ text: "«u»(«x») «=» inf", x: 132, y: 319, mathFont: CM },
+		{ text: "a(·) admissible from x", x: 166, y: 310, size: 8 },          // the limit, in words
+		{ text: "«∫∞»", x: 247, y: 331, size: 11.5, mathFont: CM },
+		{ text: "0", x: 254, y: 307, size: 8 },
+		{ text: "«e»~−λt~«l» («y»(«t»), «a»(«t»)) «dt», «λ» «>» 0.        (8.1)", x: 270, y: 319, mathFont: CM, para: true },
+		{ text: "We usually assume a compact control set and bounded continuous costs.", x: 52, y: 288, para: true },
+	]), VIEW).sentence;
+
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1,
+		`the formula is one unit: got ${JSON.stringify(units.map((u) => u.text.slice(0, 28)))}`);
+	assert.ok(displays[0].text.includes("u(x) = inf") && displays[0].text.includes("dt"),
+		`from the u to the dt: got ${JSON.stringify(displays[0].text)}`);
+	assert.ok(displays[0].text.includes("admissible"), "the limit is part of it");
+	assert.ok(!units.some((u) => u.text.includes("(8.1)")), "the equation number is dropped");
+}
+
+// ...but a line of prose at body size is never a limit, whatever it overlaps.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const units = segmentPage(layout([
+		{ text: "(3) compute «q»(«X») by (18), since (23) is not an identity for", x: 89, y: 660 },
+		{ text: "the matrix exponential;", x: 108, y: 647, para: true },
+		{ text: "(4) set «X»~t+1~ «=» «X»′ with probability min{1, «e»«−β»(«U»(«X»′))}", x: 89, y: 628, mathFont: CM, para: true },
+	]), VIEW).sentence;
+	const item3 = units.find((u) => u.text.startsWith("(3) compute"));
+	assert.ok(item3.text.endsWith("the matrix exponential;"), "the clause keeps its tail");
+}
+
 console.log("all tests passed");

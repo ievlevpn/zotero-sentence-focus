@@ -640,14 +640,20 @@ function displayRows(lines) {
 function absorbDisplayRows(lines) {
 	let rows = displayRows(lines);
 	if (!rows.length) return;
+	// The body type of the page. Anything set well below it is script type —
+	// an index, an exponent, the set an infimum is taken over — and script
+	// type is part of a formula even when it is spelled out in words, as
+	// "a(·) admissible from x" under an inf is. A sentence is never set in it.
+	const bodySize = median(lines.filter((line) => !line.furniture).map((line) => line.size)) || 10;
 	for (let pass = 0; pass < lines.length; pass++) {
 		let absorbed = false;
 		for (const line of lines) {
 			// Position alone reaches a line above or below the row, which is right
-		// for a fraction's numerator and wrong for the tail of a sentence. A
-		// piece of a formula carries no words — an operator name like `min`
-		// does not count as one — so that is what is asked for here.
-		if (line.furniture || line.kind === "display" || line.textWords > 0) continue;
+		// for a fraction's numerator and wrong for the tail of a sentence. So
+		// a piece must either carry no words — an operator name like `min`
+		// does not count as one — or be set in script type.
+		if (line.furniture || line.kind === "display") continue;
+		if (line.textWords > 0 && line.size >= 0.85 * bodySize) continue;
 			const height = line.rect[3] - line.rect[1];
 			const width = line.rect[2] - line.rect[0];
 			if (height <= 0) continue;

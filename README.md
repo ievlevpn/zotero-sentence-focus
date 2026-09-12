@@ -155,8 +155,12 @@ and comes out as one.
 Position alone reaches the line *above* the row as well as the pieces in it,
 which is right for a fraction's numerator and wrong for the tail of a sentence.
 So a line is only taken if it carries **no words at all** — an operator name
-like `min` not counting as one. Anything with a word in it is prose, whatever
-it overlaps.
+like `min` not counting as one — *or* is set in **script type**.
+
+The second clause is there because the set an infimum is taken over can be
+written in English: `inf` over *a(·) admissible from x*. That is a limit, and
+plainly part of the formula, but it has words in it. What marks it is its size
+— a limit is set well below the body type, and a sentence never is.
 
 Getting there needs the row, not the pieces. A display line reaches the plugin
 in fragments — two equations set side by side, the tail after a summation sign,
