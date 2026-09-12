@@ -39,7 +39,7 @@ function layout(lines, viewBox = VIEW) {
 		const start = chars.length;
 		let fragStart = chars.length;
 		const frags = [];
-		let math = !!ln.math, sup = false, sub = false, group = null, dy = 0;
+		let math = !!ln.math, sup = false, sub = false, group = null, dy = 0, pieceSize = null;
 		// { rot: 90 } sets the line down the page instead of across it, which
 		// is how an arXiv stamp is printed in the margin.
 		const vertical = ln.rot === 90;
@@ -48,7 +48,7 @@ function layout(lines, viewBox = VIEW) {
 		// Zotero hands back a ligature as ONE glyph whose `c` is several
 		// characters ("ffi"), covered by a single rect.
 		const emit = (text) => {
-			const sz = (sup || sub) ? size * 0.6 : size;
+			const sz = pieceSize || ((sup || sub) ? size * 0.6 : size);
 			const w = sz * 0.5 * (text.length > 1 ? text.length * 0.7 : 1);
 			const off = (sup ? 0.35 * size : sub ? -0.2 * size : 0) + dy;
 			if (vertical) {
@@ -86,6 +86,7 @@ function layout(lines, viewBox = VIEW) {
 		for (const piece of pieces) {
 		if (piece.x != null) x = piece.x;
 		dy = piece.dy || 0;
+		pieceSize = piece.size || null;
 		for (const c of piece.text) {
 			if (c === "«") { math = true; continue; }
 			if (c === "»") { math = false; continue; }
@@ -1600,5 +1601,60 @@ assert.deepStrictEqual(texts([
 ]);
 assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next one.", para: true }]),
 	["We take the limit ... and then stop.", "Next one."]);
+
+// --- a big operator that reaches up into the line above it -------------------
+
+// A display set straight after a short last line: the integral sign is tall
+// enough, with its upper limit, to overlap the band of "integral", and Zotero
+// hands both over as one fragment — "integral ∫ t" — a line of prose with a
+// formula glued to its end and a gulf in between. Read that way the sign and
+// its limit join the sentence and the rest of the formula is left on its own.
+{
+	const PAGE = [0, 0, 595, 842];
+	const TX = "CDJDPK+NewTXMI";
+	const units = segmentPage(layout([
+		{ text: "Let us give an overall view on the strategy of the paper and highlight what", x: 86, y: 158, size: 10.9 },
+		{ text: "novel things arise. First of all, let us recall a thing we noted. Indeed, the", x: 86, y: 145, size: 10.9 },
+		{ pieces: [
+			{ text: "integral", x: 86 },
+			{ text: "«∫»", x: 264, dy: -5.6, size: 17 },       // the sign, reaching up into the line
+			{ text: "«t»", x: 275, dy: 6, size: 7.6 },         // its upper limit
+		], y: 131, size: 10.9, mathFont: TX, para: true },
+		{ text: "0", x: 270, y: 103, size: 8, para: true },        // lower limit
+		{ text: "«σ»(«X»~s~) «dB»~s~", x: 283, y: 111, size: 10.9, mathFont: TX, para: true },
+		{ text: "is not defined in the classical sense, since the drift is only a distribution.", x: 86, y: 85, size: 10.9 },
+		{ text: "This is the heart of the matter and we treat it in the next section below.", x: 86, y: 72, size: 10.9, para: true },
+	], PAGE), PAGE).sentence;
+
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1,
+		`the formula is one unit: got ${JSON.stringify(units.map((u) => [u.kind, u.text]))}`);
+	assert.ok(displays[0].text.includes("σ"), `with its integrand: ${JSON.stringify(displays[0].text)}`);
+	assert.ok(displays[0].rects[0][3] >= 138 && displays[0].rects[0][1] <= 103,
+		`the band covers the sign and both limits: ${displays[0].rects[0].map((v) => v.toFixed(0))}`);
+	const indeed = units.find((u) => u.text.startsWith("Indeed"));
+	assert.strictEqual(indeed.text, "Indeed, the integral", "the sentence stops at its last word");
+	assert.ok(indeed.rects.every((r) => r[1] > 140 || r[2] < 140), "and its highlight does not reach across to the sign");
+	assert.ok(!units.some((u) => u.text === "0"), "the lower limit is not a unit of its own");
+}
+
+
+// ...but a word that opens a display row is part of the display.
+{
+	const CM = "UVFEFX+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "We therefore consider the following optimisation problem over the simplex:", x: 72, y: 700, para: true },
+		{ pieces: [
+			{ text: "maximize", x: 190 },
+			{ text: "«Σ»", x: 275, dy: -4, size: 16 },
+			{ text: "«c»~i~«x»~i~", x: 291 },
+		], y: 670, mathFont: CM, para: true },
+		{ text: "«i»", x: 277, y: 652, size: 7, mathFont: CM, para: true },
+		{ text: "and we show that its value is attained at a vertex of the simplex here.", x: 72, y: 630, para: true },
+	]), VIEW).sentence;
+	const display = units.find((u) => u.kind === "display");
+	assert.ok(display && display.text.includes("maximize"),
+		`the word stays with its formula: got ${JSON.stringify(units.map((u) => [u.kind, u.text]))}`);
+}
 
 console.log("all tests passed");

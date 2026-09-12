@@ -184,7 +184,7 @@ function charsToLines(chars) {
 	}
 
 	const merged = [];
-	for (const frag of frags) {
+	for (const frag of frags.flatMap((f) => unglueFormula(chars, f, frags))) {
 		const prev = merged[merged.length - 1];
 		if (prev && sameVisualLine(chars, prev, frag)) {
 			stitch(chars, prev[1], frag[0]);
@@ -200,6 +200,73 @@ function charsToLines(chars) {
 		if (line) lines.push(line);
 	}
 	return lines;
+}
+
+// A display set straight after a short last line can come back glued to it.
+// A big operator with its limits is tall enough to overlap the band of the
+// words before it, and Zotero, finding them on one line, hands over a single
+// fragment — "integral ∫ t" — whose tail belongs to the formula below while
+// the rest of that formula arrives as lines of its own. Prose never leaves a
+// gulf of several ems inside a line, and what stands beyond this one carries
+// no words and reaches above or below the type beside it: that is a formula
+// piece, and it is cut free to join the rows it belongs to. The words must
+// carry on the paragraph above — starting under its lines and following one
+// that runs past the gulf — or they are part of the display itself, as
+// "maximize" is before the sum it maximises.
+function unglueFormula(chars, frag, frags) {
+	const [a, b] = frag;
+	for (let k = a; k < b; k++) {
+		const left = chars[k];
+		if (/\s/.test(left.c)) continue;
+		let n = k + 1;
+		while (n <= b && /\s/.test(chars[n].c)) n++;
+		if (n > b) break;
+		const size = left.size || 10;
+		if (chars[n].rect[0] - left.rect[2] <= 3 * size) continue;
+		if (!hasWord(chars, a, k) || hasWord(chars, n, b)) continue;
+		let math = false;
+		for (let i = n; i <= b; i++) if (chars[i].math) math = true;
+		if (!math) continue;
+		const L = rawBBox(chars, a, k), R = rawBBox(chars, n, b);
+		const reach = Math.max(L[1] - R[1], R[3] - L[3]);
+		if (reach < 0.3 * size) continue;
+		const carriesOn = frags.some((f) => {
+			const P = rawBBox(chars, f[0], f[1]);
+			return P[1] > L[3] - 0.3 * size && P[1] < L[3] + 1.5 * size
+				&& Math.abs(P[0] - L[0]) <= 2 * size && P[2] >= R[0];
+		});
+		if (!carriesOn) continue;
+		left.lineEnd = true;
+		left.paraEnd = true;
+		left.space = false;
+		// Zotero gave every glyph the band of the whole fragment; each part
+		// gets back its own.
+		for (const [from, to, box] of [[a, k, L], [n, b, R]]) {
+			for (let i = from; i <= to; i++) {
+				chars[i].irect[1] = box[1];
+				chars[i].irect[3] = box[3];
+			}
+		}
+		return [[a, k], ...unglueFormula(chars, [n, b], frags)];
+	}
+	return [frag];
+}
+
+// A run of three or more letters at the size of its neighbours, outside any
+// formula font: a word of prose, not a variable or an operator name.
+function hasWord(chars, from, to) {
+	let run = 0;
+	for (let i = from; i <= to; i++) {
+		const ch = chars[i];
+		if (!ch.math && ch.c.length === 1 && /\p{L}/u.test(ch.c)) {
+			if (++run >= 3) return true;
+		} else if (ch.c.length > 1 && /\p{L}/u.test(ch.c) && !ch.math) {
+			return true;
+		} else {
+			run = 0;
+		}
+	}
+	return false;
 }
 
 function rawBBox(chars, from, to) {

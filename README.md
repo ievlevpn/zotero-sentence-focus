@@ -56,6 +56,17 @@ lines, joining two pieces when they share a horizontal band and the second
 carries on within a word space of the first. Without this a sentence simply
 stops at the first `=` after a superscript.
 
+The same test fails the other way too. A display set straight after a short
+last line — "Indeed, the integral" — can have a big operator tall enough, with
+its upper limit, to overlap the band of those words, and Zotero hands them over
+as one fragment: `integral ∫ t`. The sign then joins the sentence and the rest
+of the formula is left on its own. So a fragment is also **cut** at a gulf of
+more than three ems when the words before it carry on the paragraph above, and
+what stands beyond it carries no words, is formula material and reaches above or
+below the type beside it. The paragraph condition is what keeps `maximize` with
+the sum it opens: a word that starts a display row is indented away from the
+lines above it.
+
 Two more things are not words, though they are spelled with letters. An
 **operator name** — `min`, `max`, `log`, `det` — is set in roman inside a
 formula, and counting it as prose is what made the range under a union sign,
