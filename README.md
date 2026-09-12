@@ -238,9 +238,18 @@ would otherwise vouch for the other being body text.
 
 ## Speed
 
-Pages are analysed one at a time, on demand, and cached for the session; the
-neighbouring pages are warmed in the background so crossing a page boundary
-isn't the move that stutters. The analysis itself runs in about **1.5 ms** for
+Pages are analysed one at a time, on demand, and cached; the neighbouring pages
+are warmed in the background so crossing a page boundary isn't the move that
+stutters.
+
+What the cache holds is bounded twice over, because a reading session opens
+many documents and none of this is worth holding for as long as Zotero runs.
+A page is kept **per step size**, not with all four worked out — analysing a
+page produces all four in one pass, but a page's words outnumber its sentences
+twenty to one, and keeping all four costs about ten times what keeping one
+does. Sixty pages are kept per document, fifteen at word size, and four
+documents at all, evicted least-recently-used so the document being read is
+never the one dropped. The ceiling, every cache full, is about 6 MB. The analysis itself runs in about **1.5 ms** for
 a dense page of around 3,500 glyphs, so what you wait on is the one round-trip
 to Zotero's PDF worker, and only the first time you visit a page.
 

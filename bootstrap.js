@@ -1289,7 +1289,11 @@ const sessions = new Map();
 // itemID -> Map(pageIndex -> units). A PDF's text never changes, so a page
 // analysed once stays analysed for the session.
 const pageCache = new Map();
-const CACHE_PAGES = 60;   // four granularities each, so keep the window modest
+const CACHE_PAGES = 60;   // pages, per document and per step size
+const CACHE_WORD_PAGES = 15;  // a page's words outnumber its sentences twenty to one
+const CACHE_DOCS = 4;     // documents whose analysis is kept at all
+
+const pageLimit = () => (granularity() === "word" ? CACHE_WORD_PAGES : CACHE_PAGES);
 
 let onRenderToolbar;  // kept so shutdown can unregister it
 let prefPane;
@@ -1324,7 +1328,16 @@ function cacheFor(reader) {
 	const key = reader && reader.itemID;
 	if (key == null) return new Map();       // odd reader shape: don't share a key
 	let m = pageCache.get(key);
-	if (!m) { m = new Map(); pageCache.set(key, m); }
+	if (m) {
+		pageCache.delete(key);               // re-insert: Map order is the LRU order
+	} else {
+		m = new Map();
+	}
+	pageCache.set(key, m);
+	// Pages are capped per document, but a reading session opens many
+	// documents, and without this the analysis of every one of them is held
+	// for as long as Zotero runs.
+	while (pageCache.size > CACHE_DOCS) pageCache.delete(pageCache.keys().next().value);
 	return m;
 }
 
@@ -1333,34 +1346,43 @@ const cacheOf = (session) => cacheFor(session.reader);
 // Analyse one page, or hand back the analysis we already have. A page being
 // fetched is remembered as a promise, so a prefetch and a keypress that want
 // the same page share one trip to the worker instead of racing for it.
-function unitsFor(session, pageIndex) {
-	const cached = cacheOf(session).get(pageIndex);
+// Keyed by step size as well as page. Analysing a page works out all four
+// sizes in one pass, but keeping all four costs about ten times what keeping
+// one does — a page's words outnumber its sentences twenty to one — and the
+// step size is changed rarely. So only the size in use is kept; changing it
+// costs one re-read of each page revisited.
+const cacheKey = (pageIndex) => `${pageIndex}:${granularity()}`;
+
+function unitsAt(session, pageIndex) {
+	const key = cacheKey(pageIndex);
+	const cached = cacheOf(session).get(key);
 	if (cached) return Promise.resolve(cached);
-	let pending = session.inflight.get(pageIndex);
+	let pending = session.inflight.get(key);
 	if (!pending) {
-		pending = computeUnits(session, pageIndex);
-		session.inflight.set(pageIndex, pending);
-		pending.then(() => session.inflight.delete(pageIndex), () => session.inflight.delete(pageIndex));
+		pending = computeUnits(session, pageIndex, key);
+		session.inflight.set(key, pending);
+		pending.then(() => session.inflight.delete(key), () => session.inflight.delete(key));
 	}
 	return pending;
 }
 
-async function computeUnits(session, pageIndex) {
+async function computeUnits(session, pageIndex, key) {
 	const v = viewerOf(session.reader);
 	if (!v) return [];
 	let units = [];
 	try {
 		const data = Cu.waiveXrays(await v.pdf.getPageData(Cu.cloneInto({ pageIndex }, v.win)));
 		if (data && data.chars) {
-			units = segmentPage(data.chars, data.viewBox || [0, 0, 612, 792], { mergeDisplay: !!pref("mergeDisplay") });
+			const all = segmentPage(data.chars, data.viewBox || [0, 0, 612, 792], { mergeDisplay: !!pref("mergeDisplay") });
+			units = all[granularity()] || all.sentence || [];
 		}
 	} catch (e) {
 		Zotero.debug(`Sentence Focus: page ${pageIndex + 1} unreadable - ` + e);
 	}
 	const cache = cacheOf(session);
-	cache.set(pageIndex, units);
+	cache.set(key, units);
 	// Map iterates in insertion order, so the oldest page goes first.
-	if (cache.size > CACHE_PAGES) cache.delete(cache.keys().next().value);
+	while (cache.size > pageLimit()) cache.delete(cache.keys().next().value);
 	return units;
 }
 
@@ -1408,12 +1430,37 @@ function blendFor(v, pv) {
 	return pageLuminance(v, pv.div) < 0.5 ? "screen" : "multiply";
 }
 
+// Held weakly: a strong reference to an injected <style> would keep the whole
+// document of a reader the user closed an hour ago.
+const injectedStyles = [];
+
+function injectStyle(doc, id, css) {
+	if (!doc || doc.getElementById(id)) return;
+	const el = doc.createElement("style");
+	el.id = id;
+	el.textContent = css;
+	(doc.head || doc.documentElement).append(el);
+	if (typeof WeakRef !== "function") return;
+	// The list itself is the only thing that grows with the number of readers
+	// ever opened, so the spent references are swept out now and then.
+	if (injectedStyles.length > 50) {
+		for (let i = injectedStyles.length - 1; i >= 0; i--) {
+			if (!injectedStyles[i].deref()) injectedStyles.splice(i, 1);
+		}
+	}
+	injectedStyles.push(new WeakRef(el));
+}
+
+function dropInjectedStyles() {
+	for (const ref of injectedStyles) {
+		const el = ref.deref();
+		if (el) { try { el.remove(); } catch (e) { /* document already gone */ } }
+	}
+	injectedStyles.length = 0;
+}
+
 function injectCSS(doc) {
-	if (!doc || doc.getElementById("sfz-style")) return;
-	const s = doc.createElement("style");
-	s.id = "sfz-style";
-	s.textContent = CSS;
-	(doc.head || doc.documentElement).append(s);
+	injectStyle(doc, "sfz-style", CSS);
 }
 
 // pdf.js already carries the page's PDF-points-to-pixels matrix. Reusing it
@@ -1448,16 +1495,9 @@ function granularity() {
 	return GRANULARITIES.includes(g) ? g : "sentence";
 }
 
-function listIn(all) {
-	return (all && (all[granularity()] || all.sentence)) || [];
-}
-
 function currentUnit(session) {
-	return listIn(cacheOf(session).get(session.pageIndex))[session.unitIndex];
-}
-
-async function unitsAt(session, pageIndex) {
-	return listIn(await unitsFor(session, pageIndex));
+	const units = cacheOf(session).get(cacheKey(session.pageIndex));
+	return units && units[session.unitIndex];
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -1790,8 +1830,8 @@ async function move(session, delta) {
 function prefetch(session) {
 	const total = pageCount(session);
 	for (const p of [session.pageIndex + 1, session.pageIndex - 1]) {
-		if (p >= 0 && p < total && !cacheOf(session).has(p)) {
-			Promise.resolve().then(() => unitsFor(session, p)).catch(() => {});
+		if (p >= 0 && p < total && !cacheOf(session).has(cacheKey(p))) {
+			Promise.resolve().then(() => unitsAt(session, p)).catch(() => {});
 		}
 	}
 }
@@ -1962,6 +2002,7 @@ function setButtonState(btn, on) {
 
 function toggle(reader, doc, btn) {
 	closeMenu();
+	sweepClosedReaders();
 	if (sessions.has(reader)) { stopSession(reader); return; }
 	const session = startSession(reader, doc, btn);
 	setButtonState(btn, !!session);
@@ -2000,11 +2041,7 @@ const MENU_CSS = `
 let openMenuPanel = null;   // { el, cleanup } of the single open menu, or null
 
 function injectMenuCSS(doc) {
-	if (!doc || doc.getElementById("sfz-menu-style")) return;
-	const el = doc.createElement("style");
-	el.id = "sfz-menu-style";
-	el.textContent = MENU_CSS;
-	(doc.head || doc.documentElement).append(el);
+	injectStyle(doc, "sfz-menu-style", MENU_CSS);
 }
 
 function closeMenu() {
@@ -2234,6 +2271,7 @@ const PREF_EFFECT = {
 };
 
 function applyPrefEffect(effect) {
+	sweepClosedReaders();
 	// Everything already analysed was analysed under the old setting, whether
 	// or not a ruler happens to be switched on in that tab at the moment.
 	if (effect === "reanalyse") pageCache.clear();
@@ -2273,6 +2311,7 @@ function startup({ id, version: pluginVersion, rootURI }) {
 function shutdown() {
 	closeMenu();
 	for (const reader of [...sessions.keys()]) stopSession(reader);
+	dropInjectedStyles();
 	pageCache.clear();
 	for (const o of prefObservers) {
 		try { Zotero.Prefs.unregisterObserver(o); } catch (e) { /* already gone */ }
@@ -2297,7 +2336,7 @@ if (typeof module !== "undefined") {
 		classifyLine, linesToBlocks, joinContinuations, buildBlockText, typicalLineGap, LIST_LABEL_RE,
 		CLAUSE_END_RE,
 		splitSentences, isBoundary, prevToken, rectsForChars, boundingArea, mergeBoxes, segmentPage, colIndexFor,
-		analysePage, describePage, markEquationNumbers,
+		analysePage, describePage, markEquationNumbers, cacheFor, pageCache, CACHE_DOCS,
 		absorbDisplayRows, displayRows, markTableRows,
 		lineRanges, wordRanges, GRANULARITIES,
 		solidColor, toPercent, toUserBox, pageAspect, padBoxes, PADDING, mergeTiny, blendFor,

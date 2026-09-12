@@ -1152,4 +1152,32 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 	assert.ok(!units.some((u) => u.text.includes("(18)")), "the equation number is dropped");
 }
 
+
+
+// --- what the plugin holds on to --------------------------------------------
+
+// Pages are capped per document, but a reading session opens many documents,
+// and without a cap on those the analysis of every one is held for as long as
+// Zotero runs — a few megabytes each.
+{
+	const { cacheFor, pageCache, CACHE_DOCS } = require("./bootstrap.js");
+	pageCache.clear();
+	for (let i = 1; i <= CACHE_DOCS + 3; i++) cacheFor({ itemID: i }).set("0:sentence", []);
+	assert.strictEqual(pageCache.size, CACHE_DOCS, "only a few documents are kept");
+
+	// Least-recently-used, not first-in: the document being read must not be
+	// the one dropped just because it was opened first.
+	const oldest = [...pageCache.keys()][0];
+	cacheFor({ itemID: oldest });                       // touch it
+	cacheFor({ itemID: 999 }).set("0:sentence", []);    // force an eviction
+	assert.ok(pageCache.has(oldest), "a document used again is not the one dropped");
+	assert.strictEqual(pageCache.size, CACHE_DOCS, "and the cap still holds");
+
+	// A reader with no item id gets a scratch map rather than sharing one key.
+	const loose = cacheFor({});
+	assert.strictEqual(loose.size, 0);
+	assert.ok(!pageCache.has(undefined), "and it is not kept at all");
+	pageCache.clear();
+}
+
 console.log("all tests passed");
