@@ -97,8 +97,13 @@ of the prose around it. Consecutive display lines — an `align` environment —
 merge into one. The equation number itself is dropped: it is neither
 highlighted nor treated as text.
 
-A displayed formula is also *highlighted* differently: as the single area it
-occupies, rather than glyph by glyph. Maths is set in two dimensions — a
+A displayed formula is also *highlighted* differently: as a single band the
+**width of the text**, rather than glyph by glyph or traced around its own
+outline. A formula's outline is ragged — limits under a summation sign, a
+fraction wider than the line it sits on — and a band that follows it reads as a
+shape rather than as a mark on the page. The band runs the measure, which is
+also where an equation number sits; the number is still no part of what is
+read. Maths is set in two dimensions — a
 fraction draws its numerator then moves back and down for the denominator, a
 summation hangs its limits above and below — so following the glyphs gives a
 ragged row of boxes with holes between them. Stepping word by word through a
@@ -212,6 +217,12 @@ But a line may open with a bracketed number without being an item at all:
 *(16) equals 1 for every closed path* is a cross-reference carrying a sentence
 over. What tells the two apart is the line *before* — an item ends on a full
 stop or a semicolon, a sentence carried over ends mid-clause.
+
+An item's own continuation must also not be **centred**. A numbered
+contribution reads as a list item — *1. Correct fixed-size chains.* — and a
+formula displayed under one sits indented, at a gap the formula's own tall
+glyphs make look small. Being set about the middle of the column is what a
+display does and what a continuation never does.
 
 An item's own continuation is set in **under its label**, which is what a
 hanging indent is, so a line set in under a block that opens with a label is

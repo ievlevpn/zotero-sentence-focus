@@ -464,6 +464,15 @@ function tighten(cols, lines) {
 
 const centerX = (ln) => (ln.rect[0] + ln.rect[2]) / 2;
 
+// Set about the middle of its column. Displayed maths is; a line of prose that
+// happens to start further in — a hanging indent — is not.
+function isCentred(line) {
+	const col = line.col;
+	if (!col) return false;
+	const width = (col.right - col.left) || 1;
+	return Math.abs(centerX(line) - (col.left + col.right) / 2) < 0.06 * width;
+}
+
 function assignColumns(lines, cols) {
 	for (const ln of lines) {
 		ln.col = cols.find((c) => centerX(ln) >= c.left && centerX(ln) <= c.right) || cols[0];
@@ -528,7 +537,7 @@ function classifyLine(line) {
 	if (line.formulaFrac >= 0.5) score++;
 	if (line.hasRelation) score++;
 	if (line.rect[0] - col.left > 1.5 * line.size) score++;
-	if (Math.abs(centerX(line) - (col.left + col.right) / 2) < 0.06 * colWidth) score++;
+	if (isCentred(line)) score++;
 	if (line.textWords <= 1) score++;
 	// Nothing on the line is a word. A row of maths often reaches the reader in
 	// pieces — "P(X,Z)," on its own, once the layout has cut the line at a
@@ -835,8 +844,14 @@ function joinContinuations(blocks, typicalGap) {
 		// display apart from the text.
 		const tight = !!(next && tail
 			&& tail.rect[1] - next.rect[3] <= typicalGap + 0.6 * next.size);
+		// ...and it must not be centred. A numbered contribution reads as a list
+		// item — "1. Correct fixed-size chains." — and a formula displayed
+		// under one sits indented, at a gap the tall glyphs of the formula
+		// itself make look small. Being set about the middle of the column is
+		// what a display does and a continuation never does.
 		const indented = !!(next && head && tail && tight
 			&& LIST_LABEL_RE.test(head.text)
+			&& !isCentred(next)
 			&& next.rect[3] < tail.rect[1]
 			&& next.rect[0] > head.rect[0] + 0.5 * next.size);
 		// The tail of a list item is short and full of symbols and is easily
@@ -1075,7 +1090,7 @@ const GRANULARITIES = ["word", "line", "sentence", "paragraph"];
 // denominator, a summation hangs its limits above and below — so following the
 // glyphs produces a ragged row of boxes with holes between them. One area is
 // both what the formula is and the only shape that cannot come out ragged.
-function boundingArea(chars, idx) {
+function boundingArea(chars, idx, col) {
 	let box = null;
 	for (const i of idx) {
 		const ch = chars[i];
@@ -1087,7 +1102,13 @@ function boundingArea(chars, idx) {
 			box[2] = Math.max(box[2], r[2]); box[3] = Math.max(box[3], r[3]);
 		}
 	}
-	return box ? [box] : [];
+	if (!box) return [];
+	// A displayed formula is marked across the full width of the text rather
+	// than hugging its glyphs. A formula's outline is ragged — limits under a
+	// summation sign, a fraction wider than the line it sits on — and a band
+	// that traces it reads as a shape rather than a mark on the page.
+	if (col) { box[0] = col.left; box[2] = col.right; }
+	return [box];
 }
 
 // Fold away boxes that sit on top of one another. Inline maths is set in two
@@ -1138,7 +1159,7 @@ function mergeBoxes(rects) {
 	return out;
 }
 
-function rangeToUnit(chars, text, map, a, b, kind, wholeArea) {
+function rangeToUnit(chars, text, map, a, b, kind, wholeArea, col) {
 	// One glyph can stand behind several characters: Zotero normalises the
 	// "ffi" ligature to a three-character string but keeps it as a single
 	// glyph with a single rect. Those characters all map to the same index,
@@ -1151,7 +1172,7 @@ function rangeToUnit(chars, text, map, a, b, kind, wholeArea) {
 		if (i >= 0 && i !== idx[idx.length - 1]) idx.push(i);
 	}
 	if (!idx.length) return null;
-	const rects = mergeBoxes(wholeArea ? boundingArea(chars, idx) : rectsForChars(chars, idx));
+	const rects = mergeBoxes(wholeArea ? boundingArea(chars, idx, col) : rectsForChars(chars, idx));
 	if (!rects.length) return null;
 	// The unit's own line height. Padding is measured against this rather than
 	// the box, because a displayed formula's box spans every row it occupies
@@ -1282,8 +1303,11 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 			// individually, and at line size a cell is a line of its own.
 			const oneThing = block.kind === "display" || block.tableRow !== undefined || block.tabular;
 			const wholeArea = oneThing && g !== "word" && g !== "line";
+			// Only a formula is widened to the measure; a table row keeps to the
+			// row it occupies.
+			const band = block.kind === "display" ? (block.lines[0] && block.lines[0].col) : null;
 			for (const [a, b] of ranges[g]) {
-				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea);
+				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea, band);
 				if (unit) out[g].push(unit);
 			}
 		}
@@ -2351,7 +2375,7 @@ function uninstall() {}
 if (typeof module !== "undefined") {
 	module.exports = {
 		materialize, charsToLines, sameVisualLine, detectColumns, assignColumns, markFurniture,
-		classifyLine, linesToBlocks, joinContinuations, buildBlockText, typicalLineGap, LIST_LABEL_RE,
+		classifyLine, isCentred, linesToBlocks, joinContinuations, buildBlockText, typicalLineGap, LIST_LABEL_RE,
 		CLAUSE_END_RE,
 		splitSentences, isBoundary, prevToken, rectsForChars, boundingArea, mergeBoxes, segmentPage, colIndexFor,
 		analysePage, describePage, markEquationNumbers, cacheFor, pageCache, CACHE_DOCS,

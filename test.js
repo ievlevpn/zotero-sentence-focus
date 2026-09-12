@@ -200,6 +200,7 @@ assert.deepStrictEqual(texts([{ text: "Suppose «x ∈ X» and «y ≤ 1». Then
 	const eq = units.find((u) => u.kind === "display");
 	assert.strictEqual(eq.text, "E[X] = 0,");
 	assert.ok(!units.some((u) => u.text.includes("2.1")), "equation number must not join a unit");
+	assert.strictEqual(eq.rects.length, 1, "a formula is one band");
 }
 
 // --- hyphenation across a line break ---------------------------------------
@@ -500,7 +501,7 @@ assert.ok(!/\.sfz-layer\{[^}]*position:/.test(CSS),
 	assert.ok(eq, "the formula is a display unit");
 	assert.strictEqual(eq.rects.length, 1, "a one-line formula is one area, not four boxes");
 	const [x1, , x2] = eq.rects[0];
-	assert.ok(x1 <= 200 && x2 >= 262, "the area spans the whole formula");
+	assert.ok(x1 <= 200 && x2 >= 262, "the band covers the whole formula");
 
 	// Stepping word by word through a formula still boxes the tokens, so the
 	// area treatment must not leak down to that granularity.
@@ -641,10 +642,10 @@ const STYLE_VALUES = new Set(STYLES.map(([value]) => value));
 	assert.strictEqual(displays[0].rects.length, 1, "and it is highlighted as one area");
 	// The area covers both equations and reaches down over the limit...
 	const [x1, y1, x2, y2] = displays[0].rects[0];
-	assert.ok(x1 <= 90 && x2 >= 460, "the area spans both equations");
+	assert.ok(x1 <= 90 && x2 >= 460, "the band spans both equations");
 	assert.ok(y2 - y1 > 15, "the area reaches down over the limit under the sum");
-	// ...and stops short of the equation number.
-	assert.ok(x2 < 540, "the area stops before the equation number");
+	// The band is the width of the text, so it runs past where the equation
+	// number sits — but the number is no part of what is read.
 	assert.ok(!units.some((u) => u.text.includes("(3)")), "the equation number is dropped");
 
 	// The paragraph below keeps to itself.
@@ -918,10 +919,10 @@ const STYLE_VALUES = new Set(STYLES.map(([value]) => value));
 	assert.strictEqual(displays.length, 1, "the whole double sum is one formula");
 	assert.strictEqual(displays[0].rects.length, 1, "and one area");
 	const [x1, y1, x2, y2] = displays[0].rects[0];
-	assert.ok(x1 <= 150 && x2 >= 470, "the area spans from the q to the last denominator");
+	// The band is the width of the text, not the outline of the formula.
+	assert.ok(x1 <= 105 && x2 >= 520, "the band runs the measure");
 	assert.ok(y1 <= 620 && y2 >= 665, "and from the lowest limit to the highest numerator");
-	assert.ok(x2 < 540, "stopping short of the equation number");
-	assert.ok(!units.some((u) => u.text.includes("(15)")), "which is dropped");
+	assert.ok(!units.some((u) => u.text.includes("(15)")), "the equation number is still dropped");
 
 	// The prose around it is untouched.
 	assert.deepStrictEqual(units.filter((u) => u.kind === "text").map((u) => u.text.slice(0, 20)), [
@@ -1257,6 +1258,37 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 	]), VIEW).sentence;
 	assert.ok(all.some((u) => u.kind === "display"), "a formula with an equation number is still a formula");
 	assert.ok(!all.some((u) => u.text.includes("(7)")), "and the number is still dropped");
+}
+
+
+
+// --- a formula displayed under a numbered contribution ----------------------
+
+// "1. Correct fixed-size chains." reads as a list item, and a formula shown
+// under it sits indented at a gap the formula's own tall glyphs make look
+// small — so the rule that keeps a list item's continuation would swallow it.
+// Being set about the middle of the column is what a display does and what a
+// continuation never does.
+{
+	const CM = "UVFEFX+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "1. Correct fixed-size chains. In Section 3 we make precise the balanced move construction", x: 82, y: 284, para: true },
+		{ text: "«X» «A»~i~«−−−−→» «Y» «A»~j~«−−−→» «X»′, «X», «X»′ «∈» «Ω»~n~,", x: 210, y: 262, mathFont: CM, para: true },
+		{ text: "give the exact transition matrix, and prove:", x: 82, y: 240, para: true },
+	]), VIEW).sentence;
+
+	const display = units.find((u) => u.kind === "display");
+	assert.ok(display, `the formula stands on its own: got ${JSON.stringify(units.map((u) => u.text.slice(0, 24)))}`);
+	assert.strictEqual(display.rects.length, 1, "as one band");
+
+	// And the band is the width of the text, not the outline of the formula:
+	// it starts where the prose starts and ends where the prose ends.
+	const prose = units.find((u) => u.text.startsWith("give the exact"));
+	const [x1, , x2] = display.rects[0];
+	assert.ok(Math.abs(x1 - prose.rects[0][0]) < 1, "the band starts at the measure");
+	assert.ok(x2 > x1 + 380, "and runs its full width");
+	// Narrower than the band it would have had if it traced the formula.
+	assert.ok(x1 < 210, "which is wider than the formula itself");
 }
 
 console.log("all tests passed");
