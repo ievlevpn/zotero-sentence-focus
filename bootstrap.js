@@ -1327,7 +1327,15 @@ function describePage(rawChars, viewBox, opts = {}) {
 	// having both in one place is what makes a report worth pasting.
 	out.push("", "--- units (sentence) ---");
 	for (const unit of segmentPage(rawChars, viewBox, opts).sentence) {
-		out.push(`${unit.kind.padEnd(8)} ${unit.rects.length} box  ${JSON.stringify(unit.text.slice(0, 110))}`);
+		// The boxes as well as the text: where a highlight is drawn is half of
+		// what can go wrong, and it cannot be read off the lines above.
+		const boxes = unit.rects
+			.map((r) => `[${r.map((n) => Math.round(n)).join(",")}]`)
+			.join(" ");
+		out.push(
+			`${unit.kind.padEnd(8)} em ${unit.em.toFixed(1)}  ${JSON.stringify(unit.text.slice(0, 92))}`,
+			`         ${boxes}`,
+		);
 	}
 	return out.join("\n");
 }
