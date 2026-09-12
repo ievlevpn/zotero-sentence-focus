@@ -16,6 +16,9 @@
 //          maths is not set in Computer Modern
 //   ~n~    a subscript: smaller and lowered, as a real index is
 //   { rot: 90 }  the line runs down the page, as an arXiv stamp does
+//   pieces: [{ hang: true }]  glyphs from an extension font (big braces,
+//          operators), whose boxes cover only the top of their ink
+//   pieces: [{ raw: true }]  text taken literally, markup characters and all
 
 const assert = require("assert");
 const {
@@ -39,7 +42,7 @@ function layout(lines, viewBox = VIEW) {
 		const start = chars.length;
 		let fragStart = chars.length;
 		const frags = [];
-		let math = !!ln.math, sup = false, sub = false, group = null, dy = 0, pieceSize = null;
+		let math = !!ln.math, sup = false, sub = false, group = null, dy = 0, pieceSize = null, hang = false;
 		// { rot: 90 } sets the line down the page instead of across it, which
 		// is how an arXiv stamp is printed in the margin.
 		const vertical = ln.rot === 90;
@@ -64,7 +67,11 @@ function layout(lines, viewBox = VIEW) {
 			}
 			chars.push({
 				c: text,
-				rect: [x, y - 0.2 * sz + off, x + w, y + 0.7 * sz + off],
+				// A glyph from a TeX extension font: Zotero's box runs from a
+				// quarter em below its baseline to its declared cap height of
+				// next to nothing, while the ink hangs far below.
+				rect: hang ? [x, y - 0.25 * sz + off, x + w, y + 0.04 * sz + off]
+					: [x, y - 0.2 * sz + off, x + w, y + 0.7 * sz + off],
 				fontSize: sz,
 				fontName: math ? (ln.mathFont || MATH_FONT) : TEXT_FONT,
 				bold: !!ln.bold,
@@ -87,7 +94,9 @@ function layout(lines, viewBox = VIEW) {
 		if (piece.x != null) x = piece.x;
 		dy = piece.dy || 0;
 		pieceSize = piece.size || null;
+		hang = !!piece.hang;
 		for (const c of piece.text) {
+			if (piece.raw) { emit(c); continue; }   // no markup: a literal brace
 			if (c === "«") { math = true; continue; }
 			if (c === "»") { math = false; continue; }
 			if (c === "^") { sup = !sup; sub = false; continue; }
@@ -1655,6 +1664,46 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	const display = units.find((u) => u.kind === "display");
 	assert.ok(display && display.text.includes("maximize"),
 		`the word stays with its formula: got ${JSON.stringify(units.map((u) => [u.kind, u.text]))}`);
+}
+
+// --- a big brace, whose box is a sliver across the top of it -----------------
+
+// Zotero's box for a glyph runs from the font's descent to its cap height, and
+// the fonts TeX sets big delimiters in declare a cap height of next to nothing
+// and hang their glyphs below the baseline. So a brace's box covers only the
+// very top of the brace: the band built from boxes stops flush with the top of
+// the ink and short of its bottom.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const EX = "OKXVBW+NewPXEX";
+	const size = 10.9, y = 600;
+	// A \big brace is 1.2 em of ink centred on the axis, a quarter em above the
+	// baseline: its top 0.85 em above, and its own baseline 0.04 em below that.
+	const lift = 0.81 * size;
+	const units = segmentPage(layout([
+		{ text: "Positive interpolation may use the center node itself in this scheme.", x: 52, y: 660, size, para: true },
+		{ text: "A second line of prose so the page has a body to measure against.", x: 52, y: 646, size, para: true },
+		{ text: "and the scheme operator is defined for every node of the grid by", x: 52, y: 632, size, para: true },
+		{ pieces: [
+			{ text: "(«T»~h~«U»)~i~ «=» min", x: 160 },
+			{ text: "{", x: 222, dy: lift, hang: true, raw: true },
+			{ text: "«c»~τ~«ℓ»(«x»~i~, «a») «+» «γI»~h~«U»(«y»~a~)", x: 230 },
+			{ text: "}", x: 352, dy: lift, hang: true, raw: true },
+			{ text: ".", x: 360 },
+			{ text: "(4.3)", x: 500 },
+		], y, size, mathFont: CM, para: true },
+		{ text: "«a»∈«A»~h~", x: 196, y: y - 11, size: 7.6, mathFont: CM, para: true },
+		{ text: "Since the coefficient is positive, this is equivalent to the statement.", x: 52, y: 562, size, para: true },
+	]), VIEW).sentence;
+
+	const display = units.find((u) => u.kind === "display");
+	assert.ok(display, `the formula is found: got ${JSON.stringify(units.map((u) => [u.kind, u.text]))}`);
+	const inkTop = y + lift + 0.04 * size, inkBottom = inkTop - 1.2 * size;
+	const [, low, , high] = display.rects[0];
+	assert.ok(high >= inkTop + 0.1 * size, `room above the brace: band ${high.toFixed(1)} vs ink ${inkTop.toFixed(1)}`);
+	assert.ok(low <= inkBottom + 0.2, `the bottom of the brace: band ${low.toFixed(1)} vs ink ${inkBottom.toFixed(1)}`);
+	const above = units.find((u) => u.text.startsWith("and the scheme"));
+	assert.ok(high <= above.rects[0][1], "still below the line above");
 }
 
 console.log("all tests passed");

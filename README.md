@@ -124,6 +124,20 @@ So the band covers everything **standing on the row** — the pieces of a brace
 included, reaching a line further on each pass until nothing more is found —
 and is then clamped so that it never crosses onto a neighbouring line.
 
+**A glyph's box is not its ink**, and for big delimiters the difference is most
+of the glyph. Zotero's pdf.js fork boxes every glyph from the font's descent to
+its ascent, capped at the font's cap height, with any descent deeper than half
+an em cut to a quarter. The fonts TeX sets big braces and operators in hang
+their glyphs *below* the baseline and declare a cap height of next to nothing,
+so a brace's box is a sliver across the top of it: the top is exact, with none
+of the room a letter's box keeps above the letter, and the bottom is short by
+nearly the whole glyph. Such a box gives itself away — its part above the
+baseline is a fraction of its part below — and the ink is recovered from how it
+is set: a big delimiter is centred on the maths axis, a quarter em above the
+row's baseline, so it reaches as far below the axis as its top stands above
+it. The band takes that in, and a little room above the top. The diagnostics
+report prints `hang` with the top of such a glyph on any line that has one.
+
 A line is judged by its **middle**, and that matters at both ends. A line whose
 middle falls inside the row is standing *on* it — an equation number, the full
 stop after a fraction — and is no neighbour to stop short of; judged by its

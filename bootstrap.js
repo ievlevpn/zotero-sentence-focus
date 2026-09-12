@@ -312,6 +312,20 @@ function stitch(chars, endOfPrev, startOfNext) {
 	if (b.rect[0] - a.rect[2] > 0.2 * (a.size || 10)) a.space = true;
 }
 
+// A glyph's box is not its ink. Zotero's pdf.js fork gives every glyph the
+// box from the font's descent to its ascent — capped at its cap height, and
+// with a descent of more than half an em cut to a quarter. The fonts TeX sets
+// its big delimiters and operators in hang their glyphs *below* the baseline
+// and declare a cap height of next to nothing, so a brace comes back as a
+// sliver across the top of its ink: the top is exact and the bottom is short by
+// most of the glyph. Such a box is easy to tell from any other — its part above
+// the baseline is a fraction of its part below.
+function hangsBelowBaseline(ch) {
+	if (ch.rot) return false;
+	const above = ch.rect[3] - ch.baseline, below = ch.baseline - ch.rect[1];
+	return below > 0 && above < 0.5 * below;
+}
+
 function makeLine(chars, from, to) {
 	let text = "";
 	let mathCount = 0, glyphs = 0;
@@ -424,8 +438,21 @@ function makeLine(chars, from, to) {
 	const leader = /(?:\.\s*){4,}/.test(text);
 	const pageNumber = wideGaps >= 1 && /(?:^|\s)\d{1,4}\s*$/.test(text);
 
+	// The top of the tallest glyph that hangs from its baseline, and where the
+	// rest of the line stands — see displayBand for what they are needed for.
+	let hangTop = null;
+	const standing = [];
+	for (let i = from; i <= to; i++) {
+		const ch = chars[i];
+		if (/\s/.test(ch.c)) continue;
+		if (hangsBelowBaseline(ch)) hangTop = hangTop === null ? ch.rect[3] : Math.max(hangTop, ch.rect[3]);
+		else standing.push(ch.baseline);
+	}
+
 	const line = {
-		from, to, text, rect, size, baseline, wideGaps,
+		from, to, text, rect, size, baseline, wideGaps, hangTop,
+		standingBaseline: standing.length ? median(standing) : null,
+		standingGlyphs: standing.length,
 		tabular: wideGaps >= 2 || leader || pageNumber,
 		mathFrac: mathCount / glyphs,
 		variableFrac,
@@ -1213,16 +1240,35 @@ function displayBand(block, lines) {
 	// line of it. Taking one in extends the reach, which can bring the next
 	// one in, so this repeats until nothing more is found.
 	const reach = block.size || 10;
+	const members = new Set(block.lines);
 	for (let pass = 0; pass < 8; pass++) {
 		let grew = false;
 		for (const line of lines) {
 			if (!line.blank || line.col !== block.col) continue;
 			if (line.rect[2] < block.rect[0] || line.rect[0] > block.rect[2]) continue;
 			if (line.rect[1] > top + reach || line.rect[3] < bottom - reach) continue;
+			members.add(line);
 			if (line.rect[1] < bottom) { bottom = line.rect[1]; grew = true; }
 			if (line.rect[3] > top) { top = line.rect[3]; grew = true; }
 		}
 		if (!grew) break;
+	}
+	// A big delimiter or operator is centred on the maths axis, a quarter of an
+	// em above the baseline of the row it encloses — which is what gives back
+	// the ink its box leaves out (see hangsBelowBaseline): it reaches as far
+	// below the axis as its top stands above it. Its top is exact, with none of
+	// the room a letter's box keeps above the letter, so it is given some.
+	let row = null;
+	for (const line of block.lines) {
+		if (line.standingGlyphs && (!row || line.standingGlyphs > row.standingGlyphs)) row = line;
+	}
+	if (row) {
+		const axis = row.standingBaseline + 0.25 * row.size;
+		for (const line of members) {
+			if (line.hangTop === null || line.hangTop <= axis) continue;
+			top = Math.max(top, line.hangTop + 0.12 * row.size);
+			bottom = Math.min(bottom, 2 * axis - line.hangTop);
+		}
 	}
 	for (const line of lines) {
 		if (line.blank || line.furniture || line.col !== block.col) continue;
@@ -1415,7 +1461,8 @@ function describePage(rawChars, viewBox, opts = {}) {
 			+ ` y ${Math.round(ln.rect[1])}..${Math.round(ln.rect[3])}`
 			+ ` size ${ln.size.toFixed(1)} math ${ln.mathFrac.toFixed(2)} var ${ln.variableFrac.toFixed(2)}`
 			+ ` words ${ln.textWords} rel ${ln.hasRelation ? "y" : "n"} eqnum ${ln.eqNumFrom >= 0 ? "y" : "n"}`
-			+ ` para ${ln.paraEnd ? "y" : "n"}`,
+			+ ` para ${ln.paraEnd ? "y" : "n"}`
+			+ (ln.hangTop !== null ? ` hang ${Math.round(ln.hangTop)}` : ""),
 			`         fonts ${top}`,
 			`         text  ${JSON.stringify(ln.text.slice(0, 90))}`,
 		);
