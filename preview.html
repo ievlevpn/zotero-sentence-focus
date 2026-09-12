@@ -1,0 +1,70 @@
+<!doctype html><meta charset="utf-8">
+<title>Sentence Focus — highlight styles</title>
+<!-- A bench for the highlight styles. Open it in a browser: it loads the real
+     bootstrap.js and calls its real drawHighlight(), so what you see here is
+     what the reader draws. Not part of the plugin; nothing ships it. -->
+<style>
+  body { margin: 0; background: #e9e9ec; font: 14px system-ui; padding: 20px; }
+  .wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1360px; }
+  figure { margin: 0; }
+  figcaption { font: 600 12px system-ui; color: #444; margin: 0 0 5px; letter-spacing: .05em; text-transform: uppercase; }
+  .page { position: relative; background: #fff; width: 650px; height: 215px;
+          box-shadow: 0 1px 5px rgba(0,0,0,.18); padding: 20px 24px; box-sizing: border-box;
+          font: 17px/1.7 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; color: #111; }
+  .ln { display: block; }
+  .sfz-layer { display: contents; }
+  .sfz-veil { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+  .sfz-veil.sfz-blend { mix-blend-mode: var(--sfz-blend); }
+  em { font-style: italic; }
+</style>
+<div class="wrap" id="wrap"></div>
+<script src="bootstrap.js"></script>
+<script>
+// One span per rendered line, which is what the analysis hands over: a unit is
+// one box per visual line, not one per inline fragment.
+const BEFORE = `<span class="ln">Let &Omega;<em><sub>n</sub></em> be the set of isomorphism classes of fullerene graphs.</span>`;
+const LINES = [
+  `Design a computationally e<span>ffi</span>cient algorithm producing a`,
+  `uniformly distributed random element of <em>&Omega;<sub>n</sub></em>, without`,
+  `generating all of <em>&Omega;<sub>n</sub></em> and without knowing <em>N<sub>n</sub></em>.`,
+];
+const AFTER = `<span class="ln">Three families of chains are treated below.</span>`;
+
+for (const [value, label] of STYLES) {
+  const fig = document.createElement("figure");
+  fig.innerHTML = `<figcaption>${label}</figcaption><div class="page">${BEFORE}` +
+    LINES.map((t) => `<span class="ln target">${t}</span>`).join("") + `${AFTER}</div>`;
+  document.getElementById("wrap").append(fig);
+
+  const page = fig.querySelector(".page");
+  const pageBox = page.getBoundingClientRect();
+  const aspect = pageBox.height / pageBox.width;
+
+  const raw = [...fig.querySelectorAll(".target")].map((el) => {
+    const r = el.getBoundingClientRect();
+    return {
+      x: (r.left - pageBox.left) / pageBox.width * 100,
+      y: (r.top - pageBox.top) / pageBox.height * 100 * aspect,
+      w: r.width / pageBox.width * 100,
+      h: r.height / pageBox.height * 100 * aspect,
+    };
+  });
+
+  // Same breathing room the reader applies, measured in line heights.
+  const boxes = padBoxes(raw, raw[0].h, false, 1);
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "sfz-veil" + (value === "dim" ? "" : " sfz-blend"));
+  svg.setAttribute("viewBox", `0 0 100 ${100 * aspect}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  // Same rule paint() uses: a thin rule needs more strength than a wash.
+  svg.style.opacity = String(value === "underline" ? Math.min(0.95, 0.38 * 1.7) : 0.38);
+  if (value !== "dim") svg.style.setProperty("--sfz-blend", "multiply");
+  drawHighlight(document, svg, value, boxes, "#ffd23f", 100 * aspect);
+
+  const layer = document.createElement("div");
+  layer.className = "sfz-layer";
+  layer.append(svg);
+  page.append(layer);
+}
+</script>

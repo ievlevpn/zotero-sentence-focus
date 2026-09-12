@@ -1,0 +1,13 @@
+/* Registered via the `stylesheets` option rather than an inline <style>: the
+ * pane markup is parsed with MozXULElement.parseXULToFragment, and this is the
+ * documented way to style a plugin pane. */
+.sf-hint { opacity: .8; margin: 0 0 8px; max-width: 44em; line-height: 1.4; }
+.sf-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 10px; align-items: center; max-width: 32em; }
+.sf-row { display: flex; align-items: center; gap: 8px; }
+.sf-row input[type=range] { flex: 1; min-width: 8em; }
+.sf-row output { min-width: 3em; opacity: .8; font-variant-numeric: tabular-nums; }
+#sf-color { width: 3.2em; height: 1.7em; padding: 0; border: none; background: none; cursor: pointer; }
+.sf-check { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; }
+.sf-check label { cursor: pointer; }
+.sf-grid select { min-width: 14em; }
+.sf-hint kbd { font: 11px ui-monospace, monospace; border: 1px solid color-mix(in srgb, CanvasText 30%, Canvas); border-radius: 3px; padding: 0 3px; }
