@@ -66,6 +66,11 @@ size of a subscript, and against that ruler nothing on the line looks like a
 subscript at all — which is how `n` and `min` came to be read as the single
 four-letter word `nmin`.
 
+A line with **nothing printable** on it is not a line at all. The pieces an
+extensible brace or a large parenthesis is built from come in a font of their
+own and map to no character — left in place they are lines like any other, and
+one landing between the halves of a formula cuts it in two.
+
 A glyph set smaller than its line is a **script** — an index, an exponent — and
 counts as formula material in its own right. It also does not glue the letters
 either side of it into a word: `E_n` is a variable with an index, not a
@@ -256,8 +261,13 @@ formula — a box per cell leaves the row in pieces with the column gaps cut out
 of it. At line size a cell is still a line of its own, for stepping through a
 row one entry at a time.
 
-**Page furniture.** Running heads and page numbers are dropped, but only when
-all of a margin position, a body-sized font, a short line — or a line with no
+**Page furniture.** A running head is prose, and a line that is mostly algebra
+never is — which matters because a formula set low on the page has every other
+mark of a running head: it is short, it sits in the margin band, and once its
+limits are read as part of its own row it stands clear of the text above it.
+
+Beyond that, running heads and page numbers are dropped only when all of a
+margin position, a body-sized font, a short line — or a line with no
 lower-case letter in it, since a running head is often capitals and can run
 most of the measure — and a clear gap to the text agree. Losing the first line
 of a page is worse than keeping a page number, so the test is deliberately hard

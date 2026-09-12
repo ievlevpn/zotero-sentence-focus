@@ -1291,4 +1291,59 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 	assert.ok(x1 < 210, "which is wider than the formula itself");
 }
 
+
+
+// --- a formula at the foot of the page --------------------------------------
+
+// The margin band reaches a formula set low on the page, and a formula's head
+// is short and — once its limit is read as part of the same row — stands clear
+// of the text above it. That is every test for page furniture except the one
+// that matters: a running head is prose, and a line that is mostly algebra
+// never is.
+{
+	const PAGE = [0, 0, 540, 720];
+	const CM = "JMEJAK+NewPXMI";
+	const units = segmentPage(layout([
+		{ text: "For a test function on a shape-regular mesh, linear interpolation gives the bound.", x: 52, y: 140, para: true },
+		{ text: "Taylor expansion of the foot, discount, and frozen cost yields, on compact sets,", x: 52, y: 92, para: true },
+		// The limit under the max overlaps the line it hangs from, as on the page.
+		{ text: "«S»~i~(«φ») «=» «λφ»(«x»~i~) «+» max", x: 116, y: 60, mathFont: CM },
+		{ text: "«a»«∈»«A»~h~", x: 199, y: 55, size: 8, mathFont: CM },
+		{ text: "{«−b»(«x»~i~, «a») «·» «Dφ»(«x»~i~)} «+» «O»(«τ»)", x: 300, y: 60, mathFont: CM, para: true },
+		{ text: "BUILDING MONOTONE SCHEMES 17", x: 52, y: 31, size: 7.5, para: true },
+	], PAGE), PAGE).sentence;
+
+	assert.ok(!units.some((u) => u.text.includes("MONOTONE")), "the running head is still dropped");
+	const display = units.find((u) => u.kind === "display");
+	assert.ok(display, `the formula survives: got ${JSON.stringify(units.map((u) => u.text.slice(0, 30)))}`);
+	assert.ok(display.text.includes("Si(φ)"), `and keeps its head: got ${JSON.stringify(display.text)}`);
+}
+
+// --- a formula built from extensible braces ---------------------------------
+
+// The pieces of a big brace come from a font of their own and carry nothing
+// printable at all. Left in place they are lines like any other, and one
+// landing between the two halves of a formula cuts it in two.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const BRACE = "\uE000";      // an unmapped glyph, as an extensible brace gives
+	const units = segmentPage(layout([
+		{ text: "Positive interpolation may use the center node itself in the scheme.", x: 52, y: 660, para: true },
+		{ text: "A second line of prose to give the page a body to measure against.", x: 52, y: 646, para: true },
+		{ text: "A third line of prose, so the margins and leading are established.", x: 52, y: 632, para: true },
+		{ text: "«U»~i~ «=» min", x: 178, y: 590, mathFont: CM },
+		{ text: "«a»", x: 211, y: 582, size: 8, mathFont: CM },
+		{ text: BRACE, x: 225, y: 560, size: 4, para: true },   // a brace piece, out of reach
+		{ text: "«d»~i~ «+» «γw»~ii~«U»~i~", x: 232, y: 589, mathFont: CM, para: true },
+		{ text: "Since the coefficient is positive, this is equivalent to the statement.", x: 52, y: 530, para: true },
+	]), VIEW).sentence;
+
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1,
+		`the formula is one unit: got ${JSON.stringify(units.map((u) => u.text.slice(0, 30)))}`);
+	assert.ok(displays[0].text.includes("Ui = min") && displays[0].text.includes("γwiiUi"),
+		`both halves are in it: got ${JSON.stringify(displays[0].text)}`);
+	assert.ok(!units.some((u) => u.text.includes(BRACE)), "and the brace piece is read as nothing");
+}
+
 console.log("all tests passed");

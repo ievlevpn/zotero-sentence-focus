@@ -270,6 +270,11 @@ function makeLine(chars, from, to) {
 		}
 	}
 	if (!glyphs || !rect) return null;
+	// Nothing printable: the pieces an extensible brace or a large parenthesis
+	// is built from come in a font of their own and map to no character at
+	// all. Left in place they are lines like any other, and one landing
+	// between the halves of a formula cuts it in two.
+	if (!/[\p{L}\p{N}\p{S}\p{P}]/u.test(text)) return null;
 	// The line's body type, not its middle glyph. On `n_min ≤ m ≤ n_max` the
 	// indices outnumber the letters they belong to, so the median size is the
 	// size of a subscript — and against that ruler nothing on the line looks
@@ -496,6 +501,11 @@ function markFurniture(lines, viewBox) {
 		const inBottom = line.rect[3] <= bottomBand;
 		if (!inTop && !inBottom) continue;
 		if (line.size > 1.15 * bodySize) continue;          // a title, not a header
+		// A formula set low on the page has every mark of a running head — it
+		// is short, it sits in the margin band, and once its limits are read
+		// as part of its own row it stands clear of the text above it. What it
+		// is not is prose.
+		if (line.formulaFrac >= 0.25) continue;
 		const width = line.rect[2] - line.rect[0];
 		const colWidth = (line.col ? line.col.right - line.col.left : viewBox[2] - viewBox[0]) || 1;
 		// Short, or a bare number, or set without a single lower-case letter —
