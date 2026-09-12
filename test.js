@@ -1346,4 +1346,58 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 	assert.ok(!units.some((u) => u.text.includes(BRACE)), "and the brace piece is read as nothing");
 }
 
+
+
+// --- how tall a formula's band is -------------------------------------------
+
+// Two ways the height went wrong, with one cause: it was taken from the
+// formula's own printable glyphs. Those stop short of the braces around it,
+// and reach past the line above it.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const BRACE = "";
+
+	// Too short: the pieces of a brace carry no text, but the formula plainly
+	// occupies the space they stand in.
+	const withBraces = segmentPage(layout([
+		{ text: "Positive interpolation may use the center node itself in this scheme.", x: 52, y: 630, para: true },
+		{ text: "A second line of prose so the page has a body to measure against.", x: 52, y: 616, para: true },
+		{ text: "«U»~i~ «=» min", x: 178, y: 590, mathFont: CM },
+		{ text: BRACE, x: 225, y: 600, size: 11 },      // upper half of the brace
+		{ text: BRACE, x: 225, y: 572, size: 11 },      // lower half
+		{ text: "«d»~i~ «+» «γw»~ii~«U»~i~", x: 232, y: 589, mathFont: CM, para: true },
+		{ text: "Since the coefficient is positive, this is equivalent to the statement.", x: 52, y: 545, para: true },
+	]), VIEW).sentence;
+	const formula = withBraces.find((u) => u.kind === "display");
+	const [, low, , high] = formula.rects[0];
+	assert.ok(high > 605, `the band reaches the top of the brace: got ${high.toFixed(0)}`);
+	assert.ok(low < 572, `and the bottom of it: got ${low.toFixed(0)}`);
+
+	// ...but never onto the lines around it.
+	const above = withBraces.find((u) => u.text.startsWith("A second line"));
+	const below = withBraces.find((u) => u.text.startsWith("Since the"));
+	assert.ok(high <= above.rects[0][1], "and stops below the line above");
+	assert.ok(low >= below.rects[0][3], "and above the line below");
+}
+
+// Too tall: a fraction reaches into the white space above its line, so the
+// formula's box genuinely overlaps the box of the line before it. What it must
+// not do is cover that line's glyphs.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const units = segmentPage(layout([
+		{ text: "Approximate a short trajectory by the Euler foot rule given here.", x: 52, y: 628, para: true },
+		{ text: "Define", x: 52, y: 583, para: true },
+		{ text: "«γ» «=» «e»~−λτ~,     «c»~τ~ «=» 1 «−» «e»~−λτ~«λ»,", x: 204, y: 566, size: 11, mathFont: CM, para: true },
+		{ text: "so that cτ is the exact discounted integral of a running cost here.", x: 52, y: 542, para: true },
+		{ text: "With a finite control set and positive interpolation, set the scheme.", x: 52, y: 528, para: true },
+	]), VIEW).sentence;
+
+	const formula = units.find((u) => u.kind === "display");
+	const define = units.find((u) => u.text === "Define");
+	assert.ok(formula && define, "both are units");
+	assert.ok(formula.rects[0][3] <= define.rects[0][1],
+		`the band stops below "Define": formula top ${formula.rects[0][3].toFixed(0)}, Define bottom ${define.rects[0][1].toFixed(0)}`);
+}
+
 console.log("all tests passed");

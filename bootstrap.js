@@ -272,9 +272,10 @@ function makeLine(chars, from, to) {
 	if (!glyphs || !rect) return null;
 	// Nothing printable: the pieces an extensible brace or a large parenthesis
 	// is built from come in a font of their own and map to no character at
-	// all. Left in place they are lines like any other, and one landing
-	// between the halves of a formula cuts it in two.
-	if (!/[\p{L}\p{N}\p{S}\p{P}]/u.test(text)) return null;
+	// all. They are no part of what is read — left among the lines, one
+	// landing between the halves of a formula cuts it in two — but they are
+	// part of what a formula *occupies*, so the geometry is kept.
+	const blank = !/[\p{L}\p{N}\p{S}\p{P}]/u.test(text);
 	// The line's body type, not its middle glyph. On `n_min ≤ m ≤ n_max` the
 	// indices outnumber the letters they belong to, so the median size is the
 	// size of a subscript — and against that ruler nothing on the line looks
@@ -361,7 +362,8 @@ function makeLine(chars, from, to) {
 		rot: chars[from].rot,
 		bold: chars[from].bold,
 		kind: "text",
-		furniture: false,
+		blank,
+		furniture: blank,
 		eqNumFrom: -1,
 		labelFrom: -1,
 		labelGap: 0,
@@ -719,7 +721,7 @@ function typicalLineGap(lines) {
 	const gaps = [];
 	for (let i = 1; i < lines.length; i++) {
 		const a = lines[i - 1], b = lines[i];
-		if (a.col !== b.col) continue;
+		if (a.col !== b.col || a.furniture || b.furniture) continue;
 		const gap = a.rect[1] - b.rect[3];
 		if (gap > -2 && gap < 40) gaps.push(gap);
 	}
@@ -1100,7 +1102,43 @@ const GRANULARITIES = ["word", "line", "sentence", "paragraph"];
 // denominator, a summation hangs its limits above and below — so following the
 // glyphs produces a ragged row of boxes with holes between them. One area is
 // both what the formula is and the only shape that cannot come out ragged.
-function boundingArea(chars, idx, col) {
+// How far a formula's band reaches up and down. It covers everything standing
+// on the row — including the pieces of a brace, which carry no text but plainly
+// belong to the formula — and then stops short of the lines above and below.
+// A tall formula's box genuinely overlaps its neighbours' boxes, because a
+// fraction reaches into the white space above the line; what it must not do is
+// cover their glyphs.
+function displayBand(block, lines) {
+	let bottom = block.rect[1], top = block.rect[3];
+	// A brace reaches past the row on both sides — that is what makes it a
+	// brace — so a piece counts as standing on the row if it comes within a
+	// line of it. Taking one in extends the reach, which can bring the next
+	// one in, so this repeats until nothing more is found.
+	const reach = block.size || 10;
+	for (let pass = 0; pass < 8; pass++) {
+		let grew = false;
+		for (const line of lines) {
+			if (!line.blank || line.col !== block.col) continue;
+			if (line.rect[2] < block.rect[0] || line.rect[0] > block.rect[2]) continue;
+			if (line.rect[1] > top + reach || line.rect[3] < bottom - reach) continue;
+			if (line.rect[1] < bottom) { bottom = line.rect[1]; grew = true; }
+			if (line.rect[3] > top) { top = line.rect[3]; grew = true; }
+		}
+		if (!grew) break;
+	}
+	const middle = (bottom + top) / 2;
+	for (const line of lines) {
+		if (line.blank || line.furniture || line.col !== block.col) continue;
+		if (block.lines.includes(line)) continue;
+		// Which side it is on is decided by its middle, not its edges: a tall
+		// formula overlaps the box of the line above it.
+		if ((line.rect[1] + line.rect[3]) / 2 > middle) top = Math.min(top, line.rect[1]);
+		else bottom = Math.max(bottom, line.rect[3]);
+	}
+	return top > bottom ? [bottom, top] : null;
+}
+
+function boundingArea(chars, idx, col, band) {
 	let box = null;
 	for (const i of idx) {
 		const ch = chars[i];
@@ -1118,6 +1156,7 @@ function boundingArea(chars, idx, col) {
 	// summation sign, a fraction wider than the line it sits on — and a band
 	// that traces it reads as a shape rather than a mark on the page.
 	if (col) { box[0] = col.left; box[2] = col.right; }
+	if (band) { box[1] = band[0]; box[3] = band[1]; }
 	return [box];
 }
 
@@ -1169,7 +1208,7 @@ function mergeBoxes(rects) {
 	return out;
 }
 
-function rangeToUnit(chars, text, map, a, b, kind, wholeArea, col) {
+function rangeToUnit(chars, text, map, a, b, kind, wholeArea, col, band) {
 	// One glyph can stand behind several characters: Zotero normalises the
 	// "ffi" ligature to a three-character string but keeps it as a single
 	// glyph with a single rect. Those characters all map to the same index,
@@ -1182,7 +1221,7 @@ function rangeToUnit(chars, text, map, a, b, kind, wholeArea, col) {
 		if (i >= 0 && i !== idx[idx.length - 1]) idx.push(i);
 	}
 	if (!idx.length) return null;
-	const rects = mergeBoxes(wholeArea ? boundingArea(chars, idx, col) : rectsForChars(chars, idx));
+	const rects = mergeBoxes(wholeArea ? boundingArea(chars, idx, col, band) : rectsForChars(chars, idx));
 	if (!rects.length) return null;
 	// The unit's own line height. Padding is measured against this rather than
 	// the box, because a displayed formula's box spans every row it occupies
@@ -1315,9 +1354,10 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 			const wholeArea = oneThing && g !== "word" && g !== "line";
 			// Only a formula is widened to the measure; a table row keeps to the
 			// row it occupies.
-			const band = block.kind === "display" ? (block.lines[0] && block.lines[0].col) : null;
+			const measure = block.kind === "display" ? (block.lines[0] && block.lines[0].col) : null;
+			const band = block.kind === "display" ? displayBand(block, lines) : null;
 			for (const [a, b] of ranges[g]) {
-				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea, band);
+				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea, measure, band);
 				if (unit) out[g].push(unit);
 			}
 		}
@@ -2389,7 +2429,7 @@ if (typeof module !== "undefined") {
 		CLAUSE_END_RE,
 		splitSentences, isBoundary, prevToken, rectsForChars, boundingArea, mergeBoxes, segmentPage, colIndexFor,
 		analysePage, describePage, markEquationNumbers, cacheFor, pageCache, CACHE_DOCS,
-		absorbDisplayRows, displayRows, markTableRows,
+		absorbDisplayRows, displayRows, markTableRows, displayBand,
 		lineRanges, wordRanges, GRANULARITIES,
 		solidColor, toPercent, toUserBox, pageAspect, padBoxes, PADDING, mergeTiny, blendFor,
 		pageLuminance, CSS, STYLES,

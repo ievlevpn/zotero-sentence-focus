@@ -69,7 +69,8 @@ four-letter word `nmin`.
 A line with **nothing printable** on it is not a line at all. The pieces an
 extensible brace or a large parenthesis is built from come in a font of their
 own and map to no character — left in place they are lines like any other, and
-one landing between the halves of a formula cuts it in two.
+one landing between the halves of a formula cuts it in two. They are kept, all
+the same, because they are part of what a formula *occupies*.
 
 A glyph set smaller than its line is a **script** — an index, an exponent — and
 counts as formula material in its own right. It also does not glue the letters
@@ -101,6 +102,18 @@ equation number. Score high enough and it becomes its own unit rather than part
 of the prose around it. Consecutive display lines — an `align` environment —
 merge into one. The equation number itself is dropped: it is neither
 highlighted nor treated as text.
+
+**How tall the band is** decides itself from the page rather than from the
+formula. Taken from the formula's own printable glyphs it is wrong in both
+directions: too short, because those glyphs stop short of the braces around
+them, and too tall, because a fraction reaches up into the white space above
+its line and overlaps the box of the line before it.
+
+So the band covers everything **standing on the row** — the pieces of a brace
+included, reaching a line further on each pass until nothing more is found —
+and is then clamped so that it never crosses onto a neighbouring line. Which
+side a neighbour is on is decided by its middle rather than its edges, because
+a tall formula's box overlaps the box above it while its glyphs do not.
 
 A displayed formula is also *highlighted* differently: as a single band the
 **width of the text**, rather than glyph by glyph or traced around its own
