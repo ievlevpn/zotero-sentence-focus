@@ -1126,13 +1126,18 @@ function displayBand(block, lines) {
 		}
 		if (!grew) break;
 	}
-	const middle = (bottom + top) / 2;
 	for (const line of lines) {
 		if (line.blank || line.furniture || line.col !== block.col) continue;
 		if (block.lines.includes(line)) continue;
-		// Which side it is on is decided by its middle, not its edges: a tall
-		// formula overlaps the box of the line above it.
-		if ((line.rect[1] + line.rect[3]) / 2 > middle) top = Math.min(top, line.rect[1]);
+		// A line whose middle falls inside the row is standing *on* it — an
+		// equation number, the full stop after a fraction — and is no
+		// neighbour to stop short of. Judging by the middle rather than the
+		// edges matters at both ends: a tall formula overlaps the box of the
+		// line above it, and a line level with the formula overlaps the
+		// formula's own numerator and denominator.
+		const middle = (line.rect[1] + line.rect[3]) / 2;
+		if (middle >= bottom && middle <= top) continue;
+		if (middle > top) top = Math.min(top, line.rect[1]);
 		else bottom = Math.max(bottom, line.rect[3]);
 	}
 	return top > bottom ? [bottom, top] : null;
@@ -1226,14 +1231,17 @@ function rangeToUnit(chars, text, map, a, b, kind, wholeArea, col, band) {
 	// The unit's own line height. Padding is measured against this rather than
 	// the box, because a displayed formula's box spans every row it occupies
 	// and would otherwise be padded by a multiple of its whole height.
-	const heights = [];
+	// The size of the type, not the height of the line's band. A line carrying
+	// a fraction has a band three times its type size, and room measured
+	// against that swallows the line above.
+	const sizes = [];
 	for (const i of idx) {
 		const ch = chars[i];
-		if (ch && !ch.skip && ch.c.trim()) heights.push(ch.irect[3] - ch.irect[1]);
+		if (ch && !ch.skip && ch.c.trim()) sizes.push(ch.size);
 	}
 	return {
 		kind,
-		em: median(heights) || (rects[0][3] - rects[0][1]) || 1,
+		em: percentile(sizes, 0.75) || (rects[0][3] - rects[0][1]) || 1,
 		text: text.slice(a, b).trim(),
 		rects,
 		top: Math.max(...rects.map((r) => r[3])),
@@ -1638,7 +1646,7 @@ function toUserBox(rect, vp, aspect) {
 // highlight.
 const PADDING = {
 	text: { x: 0.20, y: 0.06 },
-	display: { x: 0.60, y: 0.22 },
+	display: { x: 0.60, y: 0.08 },
 };
 
 function padBoxes(boxes, em, isDisplay, scale) {

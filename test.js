@@ -1400,4 +1400,53 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 		`the band stops below "Define": formula top ${formula.rects[0][3].toFixed(0)}, Define bottom ${define.rects[0][1].toFixed(0)}`);
 }
 
+
+
+// A fraction's numerator stands above the line and its denominator below, so
+// an equation number set level with the line falls *inside* the formula's
+// extent. Read as a neighbour to stop short of, it cuts the denominator off.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const units = segmentPage(layout([
+		{ text: "To verify equivalence, rewrite the minimum equation as inequalities.", x: 52, y: 560, para: true },
+		{ text: "«U»~i~ «=» min", x: 205, y: 516, mathFont: CM },
+		{ text: "«a»", x: 238, y: 509, size: 8, mathFont: CM },
+		{ text: "«d»~i~ «+» «γ» «w»~ij~«U»~j~", x: 253, y: 526, mathFont: CM },   // numerator
+		{ text: "1 «−» «γw»~ii~", x: 273, y: 506, mathFont: CM },                  // denominator
+		{ text: ".        (4.7)", x: 335, y: 516, para: true },
+		{ text: "The transformed local update is still monotone in its neighbours.", x: 52, y: 480, para: true },
+	]), VIEW).sentence;
+
+	const formula = units.find((u) => u.kind === "display");
+	const [, low, , high] = formula.rects[0];
+	assert.ok(low <= 506, `the band reaches the denominator: got ${low.toFixed(0)}`);
+	assert.ok(high >= 530, `and the numerator: got ${high.toFixed(0)}`);
+	assert.ok(!units.some((u) => u.text.includes("(4.7)")), "the equation number is dropped");
+}
+
+// The room left around a unit is measured against the size of its type, not
+// the height of its line's band: a line carrying a fraction has a band three
+// times its type size, and room measured against that swallows the line above.
+{
+	const CM = "JMEJAK+NewPXMI";
+	const units = segmentPage(layout([
+		{ text: "Approximate a short trajectory by the Euler foot rule given here.", x: 52, y: 620, para: true },
+		{ text: "Define", x: 52, y: 580, para: true },
+		{ pieces: [
+			{ text: "«γ» «=» «e»~−λτ~,   «c»~τ~ «=»", x: 204 },
+			{ text: "1 «−» «e»~−λτ~", x: 290, dy: 8 },     // numerator, above the line
+			{ text: "«λ»", x: 300, dy: -8 },               // denominator, below
+			{ text: ",", x: 335 },
+		], y: 566, mathFont: CM, para: true },
+		{ text: "so that cτ is the exact discounted integral of a running cost here.", x: 52, y: 540, para: true },
+	]), VIEW).sentence;
+
+	const formula = units.find((u) => u.kind === "display");
+	const define = units.find((u) => u.text === "Define");
+	assert.ok(formula.em < 14, `the em is the type size, not the band: got ${formula.em.toFixed(1)}`);
+	assert.ok(formula.rects[0][3] <= define.rects[0][1],
+		`the band stops below "Define": ${formula.rects[0][3].toFixed(0)} vs ${define.rects[0][1].toFixed(0)}`);
+	assert.ok(formula.rects[0][3] > 570, "but still covers the numerator");
+}
+
 console.log("all tests passed");

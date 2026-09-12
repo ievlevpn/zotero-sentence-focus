@@ -111,9 +111,15 @@ its line and overlaps the box of the line before it.
 
 So the band covers everything **standing on the row** — the pieces of a brace
 included, reaching a line further on each pass until nothing more is found —
-and is then clamped so that it never crosses onto a neighbouring line. Which
-side a neighbour is on is decided by its middle rather than its edges, because
-a tall formula's box overlaps the box above it while its glyphs do not.
+and is then clamped so that it never crosses onto a neighbouring line.
+
+A line is judged by its **middle**, and that matters at both ends. A line whose
+middle falls inside the row is standing *on* it — an equation number, the full
+stop after a fraction — and is no neighbour to stop short of; judged by its
+edges instead, an equation number level with a fraction reads as a line below
+and cuts the denominator off. And a line whose middle falls outside is a
+neighbour even where the boxes overlap, which is what a tall formula does to
+the line above it.
 
 A displayed formula is also *highlighted* differently: as a single band the
 **width of the text**, rather than glyph by glyph or traced around its own
@@ -365,8 +371,10 @@ each follows the other.
   asks, because a rule two pixels tall carries far less colour than a wash over
   a whole line and would otherwise read as much fainter at the same number.
 - **Breathing room** — how much space the highlight leaves around the text. It
-  is measured in **line heights**, so it grows with the type rather than with
-  the page, and a displayed formula gets three times as much of it sideways as
+  is measured against the **size of the type**, not the height of the line's
+  band: a line carrying a fraction has a band three times its type size, and
+  room measured against that swallows the line above. It grows with the type
+  rather than with the page, and a displayed formula gets three times as much of it sideways as
   running prose: a formula is set off from the text by blank space to begin
   with, and a box drawn tight against the outermost glyph reads as a clamp
   rather than a highlight. A unit carries its own line height for this, because
