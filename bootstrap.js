@@ -350,9 +350,16 @@ function makeLine(chars, from, to) {
 		if (chars[i].rect[0] - chars[i - 1].rect[2] > 2.5 * size) wideGaps++;
 	}
 
+	// A contents entry is a row too: a title, then a dot leader or a gap, then
+	// a page number. A leader is a run of full stops each followed by a space;
+	// a bare number after a wide gap is a page number (an equation number is
+	// bracketed, and is dealt with elsewhere).
+	const leader = /(?:\.\s*){4,}/.test(text);
+	const pageNumber = wideGaps >= 1 && /(?:^|\s)\d{1,4}\s*$/.test(text);
+
 	const line = {
 		from, to, text, rect, size, baseline, wideGaps,
-		tabular: wideGaps >= 2,
+		tabular: wideGaps >= 2 || leader || pageNumber,
 		mathFrac: mathCount / glyphs,
 		variableFrac,
 		formulaFrac: Math.max(mathCount / glyphs, variableFrac),
@@ -1375,9 +1382,12 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 		const { text, map, lineStarts } = buildBlockText(chars, block.lines);
 		if (!/\p{L}|\p{N}/u.test(text)) continue;
 		const math = map.map((i) => i >= 0 && chars[i].math);
-		const sentences = block.kind === "display"
-			? [[0, text.length]]
-			: splitSentences(text, math, lineStarts);
+		// A formula and a table row are each one thing to read, and the full
+		// stops in them are not the ends of sentences: a contents entry's dot
+		// leader is a row of them, and splitting there hands its page number
+		// to the entry below.
+		const whole = block.kind === "display" || block.tabular || block.tableRow !== undefined;
+		const sentences = whole ? [[0, text.length]] : splitSentences(text, math, lineStarts);
 		const ranges = {
 			word: wordRanges(text),
 			line: lineRanges(text, lineStarts),

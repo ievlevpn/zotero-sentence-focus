@@ -286,7 +286,18 @@ gaps *inside* a line — several of them is a row, one of them is the run up to
 an equation number, and justified prose never stretches a word space that far.
 A row is also a block of its own: a table carries no full stops and often no
 paragraph breaks either, so without that a whole table of figures reads as one
-sentence.
+sentence. And a row is never split into sentences, because the full stops in it
+are not the ends of any.
+
+**Contents.** An entry in a table of contents is a row by the same token: a
+title, then a dot leader or a gap, then a page number. A leader is a run of full
+stops each followed by a space — which is exactly what a full stop ending a
+sentence looks like, so the last one before the page number used to end the
+entry and hand its number to the entry below. A chapter line with no leader has
+no full stop at all, so nothing separated one chapter from the next. A line
+with a leader, or with a bare number after a wide gap, is now a row. A year
+ending a sentence has no gap before it, an ellipsis is three stops rather than a
+leader, and an equation number is bracketed, so none of those qualifies.
 
 A row of displayed maths is laid out like a table row and must not be caught by
 this; where the pieces are separate, what separates them is words. A table's

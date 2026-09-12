@@ -1549,4 +1549,56 @@ assert.deepStrictEqual(texts([{ text: "It was filed under math.PR in 2024. Nothi
 assert.deepStrictEqual(texts([{ text: "See config.Settings for the details. Then restart.", para: true }]),
 	["See config.Settings for the details.", "Then restart."]);
 
+
+
+// --- a table of contents ----------------------------------------------------
+
+// Every entry is a title, a gap or a dot leader, and a page number. The leader
+// is a row of full stops each followed by a space, so the last of them reads as
+// the end of a sentence and hands the page number to the entry below; and a
+// chapter line has no leader and no full stop, so nothing separates one from
+// the next. An entry is a row of a table and is read as one.
+{
+	const PAGE = [0, 0, 595, 842];
+	const G = "                                        ";   // the gap before a page number
+	const units = segmentPage(layout([
+		{ text: "Contents", x: 86, y: 397, size: 12, para: true },
+		{ text: `1 Introduction${G}2`, x: 86, y: 374, bold: true, para: true },
+		{ text: "1.1 The overview of the strategy . . . . . . . . . . . . . . 2", x: 101, y: 361 },
+		{ text: "1.2 Setup and notation . . . . . . . . . . . . . . . . . . . 6", x: 101, y: 349 },
+		{ text: "1.3 Formulation . . . . . . . . . . . . . . . . . . . . . . . 10", x: 101, y: 337, para: true },
+		{ text: `2 Preliminaries${G}10`, x: 86, y: 318, bold: true, para: true },
+		{ text: `3 Partial Malliavin calculus and conditional estimates${G}13`, x: 86, y: 274, bold: true },
+		{ text: `4 Properties of the flow of the driftless equation${G}23`, x: 86, y: 256, bold: true },
+		{ text: `A Auxiliary lemmas${G}63`, x: 86, y: 238, bold: true, para: true },
+	], PAGE), PAGE).sentence;
+
+	const entries = units.filter((u) => u.text !== "Contents");
+	const shown = JSON.stringify(entries.map((u) => u.text.slice(0, 22)));
+	assert.strictEqual(entries.length, 8, `each entry is one unit: got ${shown}`);
+	// Each carries its own page number, not the next entry's.
+	assert.ok(entries.some((u) => u.text.startsWith("1.1 The overview") && /2$/.test(u.text)),
+		`an entry keeps its page number: got ${shown}`);
+	assert.ok(entries.some((u) => u.text.startsWith("1.2 Setup")), "and the next one starts at its title");
+	assert.ok(entries.some((u) => u.text.startsWith("3 Partial") && /13$/.test(u.text)),
+		"a chapter line is an entry of its own");
+	assert.ok(entries.every((u) => u.rects.length === 1), "each drawn as one band");
+}
+
+
+
+// What a contents entry is not. A year at the end of a sentence has no gap
+// before it, an ellipsis is three stops and not a leader, and an equation
+// number is bracketed.
+assert.deepStrictEqual(texts([
+	{ text: "The result was first proved by Riesz in a paper published in 1912. It", x: 82, y: 700 },
+	{ text: "was extended by others. A later proof appeared in the year 1998.", x: 82, y: 686, para: true },
+]), [
+	"The result was first proved by Riesz in a paper published in 1912.",
+	"It was extended by others.",
+	"A later proof appeared in the year 1998.",
+]);
+assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next one.", para: true }]),
+	["We take the limit ... and then stop.", "Next one."]);
+
 console.log("all tests passed");
