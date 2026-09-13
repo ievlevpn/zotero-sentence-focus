@@ -148,6 +148,13 @@ delimiter pieces it is built from (`⎧ ⎪ ⎨ ⎩`, or pieces that map to noth
 and it must be at least two lines tall and share its height with a line already
 read as a formula, so a bracket set large inside a sentence reaches nothing.
 
+A small brace is not built from pieces: it is one glyph from the extension
+font, arriving on the line of the first branch, with a box that covers only its
+top (see below). Its height comes back from the formula it opens — centred on
+the axis of the piece set just to its left, `F(x, r, p, X) =`, it reaches as
+far below that axis as it stands above — and from there it is a brace like any
+other, so `+∞ otherwise;` joins its formula.
+
 Clamping a band against its neighbours can also squeeze it to nothing, when a
 formula's lines are hemmed in by the pieces of another; a band clamped below
 most of its own glyphs' height falls back to their extent instead of being drawn

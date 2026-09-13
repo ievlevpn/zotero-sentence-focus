@@ -458,15 +458,22 @@ function makeLine(chars, from, to) {
 	// rest of the line stands — see displayBand for what they are needed for.
 	let hangTop = null;
 	const standing = [];
+	// Opening delimiters among them, each with where it stands: a brace that
+	// opens a cases formula (see absorbBraceRows).
+	const hangingOpeners = [];
 	for (let i = from; i <= to; i++) {
 		const ch = chars[i];
 		if (/\s/.test(ch.c)) continue;
-		if (hangsBelowBaseline(ch)) hangTop = hangTop === null ? ch.rect[3] : Math.max(hangTop, ch.rect[3]);
-		else standing.push(ch.baseline);
+		if (hangsBelowBaseline(ch)) {
+			hangTop = hangTop === null ? ch.rect[3] : Math.max(hangTop, ch.rect[3]);
+			if (OPENER_PIECE_RE.test(ch.c)) hangingOpeners.push({ left: ch.rect[0], right: ch.rect[2], top: ch.rect[3] });
+		} else {
+			standing.push(ch.baseline);
+		}
 	}
 
 	const line = {
-		from, to, text, rect, size, baseline, wideGaps, cells, hangTop,
+		from, to, text, rect, size, baseline, wideGaps, cells, hangTop, hangingOpeners,
 		standingBaseline: standing.length ? median(standing) : null,
 		standingGlyphs: standing.length,
 		tabular: wideGaps >= 2 || leader || pageNumber,
@@ -928,6 +935,8 @@ function markContentsEntries(lines) {
 // The glyphs a tall delimiter is built from: the brace, bracket and parenthesis
 // pieces, or the ordinary bracket characters a math font sets at size.
 const DELIMITER_PIECE_RE = /^[\s{}()[\]|‖\u239b-\u23b3\u27e8\u27e9]+$/u;
+// A delimiter that opens: what a cases formula's branches stand to the right of.
+const OPENER_PIECE_RE = /^[{([⟨|‖\u239b-\u239d\u23a1-\u23a3\u23a7-\u23aa]$/u;
 
 // A cases formula sets its branches beside a tall brace, and a branch can carry
 // words — "otherwise", "if x is odd", a type name in a program — enough to read
@@ -951,6 +960,28 @@ function absorbBraceRows(lines) {
 		} else {
 			spans.push({ col: piece.col, rot: piece.rot, left: piece.rect[0], right: piece.rect[2],
 				bottom: piece.rect[1], top: piece.rect[3], size: piece.size, members: new Set([piece]) });
+		}
+	}
+	// A small brace is one glyph, and it arrives on the line of its first branch
+	// with a box that covers only its top (see hangsBelowBaseline). Its extent
+	// comes back from the formula it opens: centred on the axis of the piece set
+	// just to its left, it reaches as far below that axis as it stands above.
+	for (const line of lines) {
+		if (line.furniture || !line.hangingOpeners || !line.hangingOpeners.length) continue;
+		for (const opener of line.hangingOpeners) {
+			let lead = null;
+			for (const other of lines) {
+				if (other === line || other.furniture || other.kind !== "display" || !other.standingGlyphs) continue;
+				if (other.col !== line.col || other.rot !== line.rot) continue;
+				if (other.rect[2] > opener.left + other.size || other.rect[2] < opener.left - 3 * other.size) continue;
+				if (other.rect[3] > opener.top + 0.5 * other.size || other.rect[3] < opener.top - 3 * other.size) continue;
+				if (!lead || other.rect[2] > lead.rect[2]) lead = other;
+			}
+			if (!lead) continue;
+			const axis = lead.standingBaseline + 0.25 * lead.size;
+			if (opener.top <= axis) continue;
+			spans.push({ col: line.col, rot: line.rot, left: opener.left, right: opener.right,
+				bottom: 2 * axis - opener.top, top: opener.top, size: lead.size, members: new Set([line]) });
 		}
 	}
 	for (const span of spans) {

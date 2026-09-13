@@ -2079,4 +2079,33 @@ assert.deepStrictEqual(texts([
 	{ text: "3 times over, ragged on the right.", x: 72, y: 676, para: true },
 ]), ["The first short line of a poem and 2 of its lines that follow 3 times over, ragged on the right."]);
 
+// --- a cases brace set as a single glyph ---------------------------------------
+
+// A small cases brace is one glyph from the extension font, and it arrives on the
+// line of the first branch. Its box is a sliver across its top (see the big brace
+// test above), so as boxes go it reaches nowhere near the second branch — and
+// "+∞ otherwise;", carrying a word, was left out of the formula. The brace's
+// real extent comes back from the axis of the formula beside it.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const size = 10;
+	const units = segmentPage(layout([
+		{ text: "equations. Allowing F to be discontinuous (even more, to become infinite), we may", x: 72, y: 257, size },
+		{ text: "write the equation in our form by putting", x: 72, y: 245, size, para: true },
+		{ text: "«F»(«x», «r», «p», «X») «=»", x: 140, y: 214.5, size, mathFont: CM, para: true },
+		{ pieces: [
+			{ text: "{", x: 206, dy: 21.1, hang: true, raw: true },
+			{ text: "«−» det(«X») «+» «f»(«x», «r», «p») if «X» «≥» 0,", x: 217, dy: 8 },
+		], y: 214.5, size, mathFont: CM, para: true },
+		{ text: "«+∞» otherwise;", x: 217, y: 207, size, mathFont: CM, para: true },
+		{ text: "F is then degenerate elliptic. This follows from the fact that the product is.", x: 72, y: 185, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1, `one formula: ${got}`);
+	assert.ok(displays[0].text.includes("otherwise"), `with both branches: ${got}`);
+	assert.ok(displays[0].rects[0][1] <= 205, `and the band covers the second: ${got}`);
+}
+
 console.log("all tests passed");
