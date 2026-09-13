@@ -322,6 +322,16 @@ paragraph breaks either, so without that a whole table of figures reads as one
 sentence. And a row is never split into sentences, because the full stops in it
 are not the ends of any.
 
+Rows are counted in **cells**, not pieces. A cell too long for its column wraps,
+and then the row arrives as the wrapped cell standing apart from the rest of
+the row — two pieces, but three cells — with the cell's second line alone
+underneath. That line is set in under its own cell and stops short of the next
+one, at ordinary leading, and it is read and highlighted with its row; a
+caption, or a capitalised line under a cell that had finished, is not. Nothing
+is pulled into a table from outside either: a lead-in that ends on a colon is
+still open as far as sentences go, but the header under it is not the rest of
+it.
+
 **Contents.** An entry in a table of contents is a row by the same token: a
 title, then a dot leader or a gap, then a page number. A leader is a run of full
 stops each followed by a space — which is exactly what a full stop ending a

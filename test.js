@@ -1764,4 +1764,73 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.strictEqual(menu.textContent, "1 sentence read in this tab");
 }
 
+// --- a table whose cells wrap ------------------------------------------------
+
+// A table introduced by a colon, with cells long enough to wrap onto a second
+// line. The colon left the lead-in open, so the header was pulled into its
+// sentence as a continuation, and every row after it followed. A row whose
+// first cell wraps arrives as two pieces side by side — the cell, and the rest
+// of the row — plus the wrapped line below, and needs reading as one row.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 10.9;
+	const row = (y, cells, extra = {}) => ({ pieces: cells.map(([x, text]) => ({ x, text })), y, size, ...extra });
+	const units = segmentPage(layout([
+		{ text: "Parametric families need somewhere to be evaluated. Each level label is", x: 85, y: 537, size },
+		{ text: "mapped to a real number by the level value routine, which tries four patterns", x: 85, y: 523, size },
+		{ text: "and returns the first match:", x: 85, y: 508, size, para: true },
+		row(481, [[85, "Pattern"], [231, "Example"], [376, "Value"]], { para: true }),
+		row(461, [[85, "a bare number"], [231, "34, -2.5"], [376, "the number itself"]]),
+		{ text: "two numbers separated by", x: 85, y: 446, size },
+		{ text: "-, –, —, to, or ..", x: 85, y: 431.5, size, para: true },
+		row(446, [[231, "25-34"], [376, "the midpoint, 29.5"]], { para: true }),
+		row(417, [[85, "a number followed by +"], [231, "85+"], [376, "the number, 85"]]),
+		{ text: "< or under followed by a", x: 85, y: 402, size },
+		{ text: "number", x: 85, y: 387, size, para: true },
+		row(402, [[231, "<16, under 16"], [376, "the number, 16"]], { para: true }),
+		{ text: "Surrounding whitespace is ignored. If every level parses, the resulting vector", x: 85, y: 347, size },
+		{ text: "is the support. If any level fails, the variable falls back to positional indices.", x: 85, y: 332, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+
+	const lead = units.find((u) => u.text.startsWith("Each level label"));
+	assert.ok(lead.text.endsWith("first match:"), `the lead-in stops at the table: ${got}`);
+	const wrapped = units.find((u) => u.text.includes("two numbers"));
+	assert.ok(wrapped.text.includes("or ..") && wrapped.text.includes("midpoint"),
+		`a row with a wrapped cell is one row: ${got}`);
+	assert.strictEqual(wrapped.rects.length, 1, "drawn as one band");
+	assert.ok(wrapped.rects[0][1] <= 430 && wrapped.rects[0][3] >= 453, "covering both of its lines");
+	const last = units.find((u) => u.text.includes("under followed"));
+	assert.ok(last.text.includes("number") && last.text.includes("<16"), `and so is the last one: ${got}`);
+	for (const cell of ["Pattern", "a bare number", "a number followed"]) {
+		const unit = units.find((u) => u.text.startsWith(cell));
+		assert.ok(unit && !unit.text.includes("two numbers") && !unit.text.includes("first match"),
+			`"${cell}" opens a row of its own: ${got}`);
+	}
+	assert.ok(units.some((u) => u.text === "Surrounding whitespace is ignored."), "the prose after it is untouched");
+}
+
+// ...and a row the layout kept on one line takes its wrapped cell too, while a
+// caption set straight under the table does not join the last row.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 10.9;
+	const row = (y, cells, extra = {}) => ({ pieces: cells.map(([x, text]) => ({ x, text })), y, size, ...extra });
+	const units = segmentPage(layout([
+		{ text: "The patterns are tried in the order given in the table below, first match wins.", x: 85, y: 537, size, para: true },
+		row(510, [[85, "Pattern"], [231, "Example"], [376, "Value"]], { para: true }),
+		row(490, [[85, "two numbers separated"], [231, "25-34"], [376, "the midpoint"]]),
+		{ text: "by a dash", x: 85, y: 475.5, size, para: true },
+		row(461, [[85, "a bare number"], [231, "34"], [376, "the number itself"]], { para: true }),
+		{ text: "Table 2: Patterns.", x: 85, y: 447, size, para: true },
+		{ text: "Surrounding whitespace is ignored, and so are the level labels that do not parse.", x: 85, y: 420, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	const wrapped = units.find((u) => u.text.startsWith("two numbers"));
+	assert.ok(wrapped.text.includes("by a dash"), `the wrapped cell stays with its row: ${got}`);
+	assert.strictEqual(wrapped.rects.length, 1, "one band");
+	const lastRow = units.find((u) => u.text.startsWith("a bare number"));
+	assert.ok(!lastRow.text.includes("Table 2"), `the caption is not a cell: ${got}`);
+}
+
 console.log("all tests passed");

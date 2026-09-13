@@ -427,8 +427,17 @@ function makeLine(chars, from, to) {
 	// such gaps is a row; one of them is the run up to an equation number, and
 	// justified prose never stretches a word space this far.
 	let wideGaps = 0;
+	const cells = [[chars[from].rect[0], chars[from].rect[2]]];
 	for (let i = from + 1; i <= to; i++) {
-		if (chars[i].rect[0] - chars[i - 1].rect[2] > 2.5 * size) wideGaps++;
+		const r = chars[i].rect;
+		if (r[0] - chars[i - 1].rect[2] > 2.5 * size) {
+			wideGaps++;
+			cells.push([r[0], r[2]]);
+		} else {
+			const cell = cells[cells.length - 1];
+			cell[0] = Math.min(cell[0], r[0]);
+			cell[1] = Math.max(cell[1], r[2]);
+		}
 	}
 
 	// A contents entry is a row too: a title, then a dot leader or a gap, then
@@ -450,7 +459,7 @@ function makeLine(chars, from, to) {
 	}
 
 	const line = {
-		from, to, text, rect, size, baseline, wideGaps, hangTop,
+		from, to, text, rect, size, baseline, wideGaps, cells, hangTop,
 		standingBaseline: standing.length ? median(standing) : null,
 		standingGlyphs: standing.length,
 		tabular: wideGaps >= 2 || leader || pageNumber,
@@ -829,12 +838,16 @@ const CLAUSE_END_RE = /[.;:!?\u2026]["'\u201d\u2019)\]]*\s*$/;
 // A table row arrives as one piece per cell, spread right across the measure.
 // Read a cell at a time it says nothing — "theorem" on its own, then "O(n)
 // tests" — so a row of cells is treated as one line and highlighted as one.
+// Where the layout sees one baseline it hands over cells and all as one line;
+// where it does not, the row comes in pieces, a cell or a run of cells each. So
+// a row is counted in cells, not pieces: a first cell standing apart from the
+// rest of its row is two pieces, and three cells.
 //
 // A row of displayed maths is laid out the same way and must not be caught by
 // this. What separates them is words: a table's cells carry them ("hypothesis",
-// "cost/step"), a formula's pieces do not, so a row needs two cells with a real
-// word in them before it counts as a table.
-function markTableRows(lines) {
+// "cost/step"), a formula's pieces do not, so a row needs two pieces with a
+// real word in them before it counts as a table.
+function markTableRows(lines, typicalGap) {
 	const rows = [];
 	for (const line of lines) {
 		if (line.furniture) continue;
@@ -854,15 +867,61 @@ function markTableRows(lines) {
 		row.rect[3] = Math.max(row.rect[3], line.rect[3]);
 		row.members.push(line);
 	}
+	const alone = new Set(rows.filter((row) => row.members.length === 1).map((row) => row.members[0]));
 	let id = 0;
 	for (const row of rows) {
-		if (row.members.length < 3) continue;
-		if (row.members.filter((m) => m.textWords >= 1).length < 2) continue;
-		id++;
-		for (const member of row.members) {
-			member.kind = "text";     // a row of cells is read, not set apart
-			member.tableRow = id;
+		const cells = row.members.reduce((n, m) => n + m.cells.length, 0);
+		const isRow = row.members.length >= 2 && cells >= 3
+			&& row.members.filter((m) => m.textWords >= 1).length >= 2;
+		// A row the layout kept on one line is already known for what it is;
+		// it is looked at here only for cells wrapped onto the lines below it.
+		const oneLine = row.members.length === 1 && row.members[0].tabular && row.members[0].kind === "text"
+			&& cells >= 3;
+		if (!isRow && !oneLine) continue;
+		let rowId = null;
+		const claim = (line) => {
+			if (rowId === null) rowId = ++id;
+			line.kind = "text";     // a row of cells is read, not set apart
+			line.tableRow = rowId;
+		};
+		if (isRow) for (const member of row.members) claim(member);
+		attachWrappedCells(row, lines, alone, typicalGap, claim);
+	}
+}
+
+// A cell too long for its column wraps, and its second line stands alone under
+// the row, set in under its own cell and nowhere near the next one. Belonging
+// to the row, it is read and highlighted with it — otherwise it reads as a
+// scrap of a sentence and draws a highlight of its own under half a row.
+function attachWrappedCells(row, lines, alone, typicalGap, claim) {
+	const cells = [];
+	for (const member of row.members) {
+		for (const cell of member.cells) cells.push({ left: cell[0], right: cell[1], line: member });
+	}
+	cells.sort((p, q) => p.left - q.left);
+	let bottom = row.rect[1];
+	for (;;) {
+		let found = null;
+		for (const line of lines) {
+			if (!alone.has(line) || line.tableRow !== undefined || line.tabular || line.kind !== "text") continue;
+			if (line.col !== row.col || line.rot !== row.rot) continue;
+			if (line.rect[3] > bottom + 0.3 * line.size || bottom - line.rect[3] > typicalGap + 0.6 * line.size) continue;
+			const k = cells.findIndex((cell, j) => line.rect[0] >= cell.left - line.size
+				&& (j + 1 === cells.length || line.rect[2] < cells[j + 1].left - 0.5 * line.size));
+			if (k < 0 || line.rect[0] > (cells[k + 1] ? cells[k + 1].left : Infinity)) continue;
+			// A caption or a paragraph set straight under the table opens with a
+			// capital after a cell that was finished; a wrapped cell carries on.
+			if (/^\s*(?:Table|Tab\.|Figure|Fig\.)\s/.test(line.text)) continue;
+			if (/^\s*\p{Lu}/u.test(line.text) && /[.!?:]\s*$/.test(cells[k].line.text)) continue;
+			found = { line, k };
+			break;
 		}
+		if (!found) return;
+		// A row kept on one line becomes a row of lines only now it has one.
+		for (const member of row.members) if (member.tableRow === undefined) claim(member);
+		claim(found.line);
+		cells[found.k].line = found.line;
+		bottom = Math.min(bottom, found.line.rect[1]);
 	}
 }
 
@@ -912,10 +971,10 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 		// A row of cells is one thing and the row under it is another, whatever
 		// the layout says about paragraphs — table rows carry no full stops
 		// and often no paragraph breaks either.
-		if (cur && (ln.tabular || previous && previous.tabular)) cur = null;
+		const inRow = ln.tableRow !== undefined && previous && previous.tableRow === ln.tableRow;
+		if (cur && !inRow && (ln.tabular || previous && previous.tabular)) cur = null;
 		// Cells of one table row are one line; the row after it is another.
 		if (cur && previous && previous.tableRow !== ln.tableRow) cur = null;
-		const inRow = ln.tableRow !== undefined && previous && previous.tableRow === ln.tableRow;
 		// A line may open with a bracketed number without being a list item:
 		// "(16) equals 1 for every closed path" is a cross-reference carrying a
 		// sentence over. What tells them apart is the line before — an item
@@ -979,6 +1038,9 @@ function joinContinuations(blocks, typicalGap) {
 		const b = blocks[i], a = blocks[i - 1];
 		if (a.kind !== "text") continue;
 		if (a.lines[0] && b.lines[0] && a.lines[0].rot !== b.lines[0].rot) continue;
+		// A table row is complete in itself, and the lead-in to a table stops
+		// on a colon without the header being the rest of its sentence.
+		if (a.tabular || b.tabular || a.tableRow !== undefined || b.tableRow !== undefined) continue;
 		const at = a.lines.map((l) => l.text).join(" ").trim();
 		const bt = (b.lines[0] || { text: "" }).text.trim();
 		if (!at || !bt) continue;
@@ -1471,7 +1533,7 @@ function analysePage(rawChars, viewBox, opts = {}) {
 		if (!ln.furniture) ln.kind = classifyLine(ln);
 	}
 	absorbDisplayRows(lines);
-	markTableRows(lines);            // after absorbing, so a formula's row is already one
+	markTableRows(lines, typicalLineGap(lines));   // after absorbing, so a formula's row is already one
 	return { chars, lines, cols, fragments };
 }
 
@@ -1503,7 +1565,8 @@ function describePage(rawChars, viewBox, opts = {}) {
 			+ ` size ${ln.size.toFixed(1)} math ${ln.mathFrac.toFixed(2)} var ${ln.variableFrac.toFixed(2)}`
 			+ ` words ${ln.textWords} rel ${ln.hasRelation ? "y" : "n"} eqnum ${ln.eqNumFrom >= 0 ? "y" : "n"}`
 			+ ` para ${ln.paraEnd ? "y" : "n"}`
-			+ (ln.hangTop !== null ? ` hang ${Math.round(ln.hangTop)}` : ""),
+			+ (ln.hangTop !== null ? ` hang ${Math.round(ln.hangTop)}` : "")
+			+ (ln.tableRow !== undefined ? ` row ${ln.tableRow}` : ln.tabular ? " tabular" : ""),
 			`         fonts ${top}`,
 			`         text  ${JSON.stringify(ln.text.slice(0, 90))}`,
 		);
