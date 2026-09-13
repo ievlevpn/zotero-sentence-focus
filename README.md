@@ -155,6 +155,19 @@ the axis of the piece set just to its left, `F(x, r, p, X) =`, it reaches as
 far below that axis as it stands above — and from there it is a brace like any
 other, so `+∞ otherwise;` joins its formula.
 
+Not every extension font gives itself away by its box. Computer Modern's CMEX,
+in many PDFs, declares an ordinary height, and then a brace's box stands on the
+baseline like a letter's, its top well above the ink and its bottom nowhere
+near the second branch. So the extension fonts are also known by **name** —
+`cmex`, `txex`, `pxex`, `NewPXEX` — and the top of a hanging glyph's ink is
+taken at its baseline rather than at the top of its box.
+
+**Set off, with words in it.** `T(x̂) = convex hull(UT(x̂))` carries enough
+roman words to fall short of looking like a formula. What it keeps is how it is
+set: centred, a relation in it, and space above and below that no line of a
+paragraph has. A centred heading is set off too, but carries no relation and is
+set in bold.
+
 Clamping a band against its neighbours can also squeeze it to nothing, when a
 formula's lines are hemmed in by the pieces of another; a band clamped below
 most of its own glyphs' height falls back to their extent instead of being drawn
@@ -248,6 +261,18 @@ rest of its expression. Once a number is found on either side, the line's
 formula fractions are taken again without it: on a short piece of a row cut
 at a summation sign, the number's digits outnumber the formula.
 
+When a formula is too wide for it, the number is **raised** onto a line of its
+own above the formula, and the layout still hands both over as one line —
+sometimes with the formula's brace landing in the middle of the number in
+reading order, `(2.1{5)`. The pieces of a big delimiter are passed over in
+reading the number, and a number standing half a line or more above what
+follows it needs no gulf to be one.
+
+A display is also set in from the margin and never begins with a word, so a
+line at the margin that opens with one — *where A = D²φ(x̂) ∈ S(N), N = N₁ + ⋯ +
+N_k.*, straight under a formula — is the sentence after the formula, however
+full of symbols.
+
 **Sentence boundaries.** Every `.`, `?`, `!` and `…` is a candidate, and most
 of the work is in throwing candidates out:
 
@@ -257,6 +282,7 @@ of the work is in throwing candidates out:
 | `3.14`, `Version 2.0` | digits on both sides |
 | `see Fig. 3`, `by Thm. 2.1`, `i.e. the map` | a known abbreviation before it |
 | `J. R. R. Tolkien` | a run of author initials |
+| `Crandall and R. Newcomb` | a single initial after a surname and "and" |
 | `1. the first case` | a list label at the start of a line |
 | `1.2. State of the art` | a run-in section heading's number |
 | `the bound holds.¹² The rest` | a raised footnote marker read as a decimal |

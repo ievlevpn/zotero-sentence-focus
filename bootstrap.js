@@ -320,10 +320,23 @@ function stitch(chars, endOfPrev, startOfNext) {
 // sliver across the top of its ink: the top is exact and the bottom is short by
 // most of the glyph. Such a box is easy to tell from any other — its part above
 // the baseline is a fraction of its part below.
+//
+// Not every such font gives itself away by its box: where it declares an
+// ordinary height, the box stands on the baseline like a letter's, its top well
+// above the ink. So the extension fonts are also known by name — cmex, txex,
+// pxex, NewPXEX — and for any hanging glyph the top of the ink is taken at the
+// baseline, not at the top of its box.
+const EXTENSION_FONT_RE = /^(?:cm|lm|eu|tx|px|zpl|newtx|newpx|mt|stix)?ex[a-z]*\d*$/i;
+
 function hangsBelowBaseline(ch) {
 	if (ch.rot) return false;
+	if (EXTENSION_FONT_RE.test(ch.font.replace(/^[A-Z]{6}\+/, ""))) return true;
 	const above = ch.rect[3] - ch.baseline, below = ch.baseline - ch.rect[1];
 	return below > 0 && above < 0.5 * below;
+}
+
+function hangingInkTop(ch) {
+	return Math.min(ch.rect[3], ch.baseline + 0.1 * (ch.size || 10));
 }
 
 function makeLine(chars, from, to) {
@@ -465,8 +478,9 @@ function makeLine(chars, from, to) {
 		const ch = chars[i];
 		if (/\s/.test(ch.c)) continue;
 		if (hangsBelowBaseline(ch)) {
-			hangTop = hangTop === null ? ch.rect[3] : Math.max(hangTop, ch.rect[3]);
-			if (OPENER_PIECE_RE.test(ch.c)) hangingOpeners.push({ left: ch.rect[0], right: ch.rect[2], top: ch.rect[3] });
+			const top = hangingInkTop(ch);
+			hangTop = hangTop === null ? top : Math.max(hangTop, top);
+			if (OPENER_PIECE_RE.test(ch.c)) hangingOpeners.push({ left: ch.rect[0], right: ch.rect[2], top });
 		} else {
 			standing.push(ch.baseline);
 		}
@@ -493,6 +507,7 @@ function makeLine(chars, from, to) {
 		eqNumTo: -1,
 		leftLabelTo: -1,
 		leftLabelGap: 0,
+		leftLabelRaised: false,
 		labelFrom: -1,
 		labelGap: 0,
 	};
@@ -519,17 +534,35 @@ function markEquationNumber(chars, line) {
 		break; // only the last gap can hold a right-margin label
 	}
 	// Some styles set the number at the left margin instead, and there the
-	// first gap is the one that matters.
-	for (let i = from + 1; i <= to; i++) {
-		const gap = chars[i].rect[0] - chars[i - 1].rect[2];
-		if (gap < 1.2 * line.size) continue;
-		let head = "";
-		for (let j = from; j < i; j++) head += chars[j].c;
-		if (EQ_LABEL_RE.test(head.trim())) {
-			line.leftLabelTo = i - 1;
-			line.leftLabelGap = gap;
+	// first gap is the one that matters. Where the formula is too wide for it,
+	// the number is raised onto a line of its own above the formula — which
+	// the layout still hands over as one line, sometimes with a brace from the
+	// formula below landing in the middle of it: "(2.1{5)". So the pieces of a
+	// big delimiter are passed over in reading the number, and a number raised
+	// clear of what follows it needs no gap to be one.
+	let head = "";
+	const labelBases = [];
+	for (let i = from; i < to; i++) {
+		const ch = chars[i];
+		if (!hangsBelowBaseline(ch)) {
+			head += ch.c;
+			if (ch.c.trim()) labelBases.push(ch.baseline);
 		}
-		break;
+		if (head.trim().length > 16) break;
+		const next = chars[i + 1];
+		if (hangsBelowBaseline(next)) continue;
+		const gap = next.rect[0] - ch.rect[2];
+		if (EQ_LABEL_RE.test(head.trim()) && gap >= 0.3 * line.size) {
+			const rest = [];
+			for (let j = i + 1; j <= to; j++) {
+				if (chars[j].c.trim() && !hangsBelowBaseline(chars[j]) && chars[j].size >= 0.85 * line.size) rest.push(chars[j].baseline);
+			}
+			line.leftLabelTo = i;
+			line.leftLabelGap = gap;
+			line.leftLabelRaised = rest.length > 0 && median(labelBases) - median(rest) >= 0.5 * line.size;
+			break;
+		}
+		if (gap >= 1.2 * line.size) break;
 	}
 }
 
@@ -793,7 +826,7 @@ function markEquationNumbers(lines) {
 		if (line.labelFrom >= 0 && (line.labelGap >= 2.5 * line.size || atRightMargin)) {
 			line.eqNumFrom = line.labelFrom;
 		}
-		if (line.leftLabelTo >= 0 && atLeftMargin && line.leftLabelGap >= 2.5 * line.size) {
+		if (line.leftLabelTo >= 0 && atLeftMargin && (line.leftLabelGap >= 2.5 * line.size || line.leftLabelRaised)) {
 			line.eqNumTo = line.leftLabelTo;
 		}
 		// The number's digits are no part of the formula, and on a short piece
@@ -880,6 +913,13 @@ function keepRunningLines(lines) {
 	for (const line of lines) {
 		if (line.furniture) continue;
 		const m = measure.get(line.col);
+		// A display is set in from the margin and does not begin with a word.
+		// "where A = D²φ(x̂) ∈ S(N), N = N₁ + ⋯ + N_k." at the margin, just under
+		// a formula, is the sentence after it — mostly symbols, but prose.
+		if (m && line.kind === "display" && !line.rot && line.eqNumFrom < 0 && line.eqNumTo < 0
+			&& Math.abs(line.rect[0] - m.left) <= 0.5 * line.size && opensWithWord(line)) {
+			line.kind = "text";
+		}
 		if (m && previous && line.kind === "display" && previous.kind === "text" && previous.col === line.col
 			&& !line.rot && !previous.rot && line.textWords >= 1
 			&& line.eqNumFrom < 0 && line.eqNumTo < 0
@@ -930,6 +970,38 @@ function markContentsEntries(lines) {
 			i = Math.max(i + 1, j);
 		}
 	}
+}
+
+// A formula can carry enough roman words — "T(x̂) = convex hull(UT(x̂))" — to
+// fall short of looking like one. What it keeps is how it is set: centred, a
+// relation in it, and space above and below it that no line of a paragraph has.
+// A heading is centred and set off too, but carries no relation, and is set in
+// bold or at a size of its own.
+function promoteSetOffFormulas(lines, typicalGap) {
+	const flow = lines.filter((line) => !line.furniture && !line.rot);
+	for (let i = 1; i < flow.length - 1; i++) {
+		const line = flow[i], above = flow[i - 1], below = flow[i + 1];
+		if (line.kind !== "text" || line.tabular || line.bold || !line.hasRelation) continue;
+		if (line.formulaFrac < 0.1 || line.textWords > 3 || !isCentred(line)) continue;
+		if (above.col !== line.col || below.col !== line.col) continue;
+		const room = typicalGap + 0.6 * line.size;
+		if (above.rect[1] - line.rect[3] > room && line.rect[1] - below.rect[3] > room) line.kind = "display";
+	}
+}
+
+// The line's first token is a word of prose: three letters or more, none of
+// them from a formula font, and not an operator name like `max`.
+function opensWithWord(line) {
+	const m = /^\s*(\p{L}+)/u.exec(line.text);
+	if (!m || m[1].length < 3 || MATH_WORDS.has(m[1].toLowerCase())) return false;
+	let seen = 0;
+	for (let i = 0; seen < m[1].length && i < line.glyphKinds.length; i++) {
+		const kind = line.glyphKinds[i];
+		if (!kind) continue;
+		if (kind & 4) return false;
+		seen++;
+	}
+	return true;
 }
 
 // The glyphs a tall delimiter is built from: the brace, bracket and parenthesis
@@ -1053,6 +1125,13 @@ function absorbDisplayRows(lines) {
 // full stop, so nothing else separates them either.
 const LIST_LABEL_RE = /^\s*[([]?\s*(?:\d{1,3}|[ivxlcdm]{1,5}|\p{L})\s*[).\]]\s+\S/iu;
 const CLAUSE_END_RE = /[.;:!?\u2026]["'\u201d\u2019)\]]*\s*$/;
+
+// "(see also M." / "G. Crandall": a name's initials broken across a line. The
+// second line opens with a capital and a stop, which is also what a lettered
+// list item looks like; the first ending on a lone initial is what it is not.
+function continuesInitials(before, after) {
+	return /(?:^|[\s(])\p{Lu}\.\s*$/u.test(before) && /^\s*\p{Lu}\.\s+\p{Lu}/u.test(after);
+}
 
 // A table row arrives as one piece per cell, spread right across the measure.
 // Read a cell at a time it says nothing — "theorem" on its own, then "O(n)
@@ -1230,7 +1309,7 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 		// sentence over. What tells them apart is the line before — an item
 		// ends on a full stop or a semicolon, a sentence carried over ends
 		// mid-clause.
-		if (cur && previous && LIST_LABEL_RE.test(ln.text)
+		if (cur && previous && LIST_LABEL_RE.test(ln.text) && !continuesInitials(previous.text, ln.text)
 			&& (previous.paraEnd || CLAUSE_END_RE.test(previous.text))) {
 			cur = null;
 		}
@@ -1306,7 +1385,7 @@ function joinContinuations(blocks, typicalGap) {
 		// formula may be pulled back into the sentence before it.
 		const openExpression = /[=+×÷<>≤≥≈≡∼∈∉⊂⊆→↦−–—-]\s*$/u.test(at);
 		// A list item is its own thing, whatever the lead-in before it ended on.
-		if (LIST_LABEL_RE.test(bt) || (b.lines[0] && b.lines[0].entryStart)) continue;
+		if ((LIST_LABEL_RE.test(bt) && !continuesInitials(at, bt)) || (b.lines[0] && b.lines[0].entryStart)) continue;
 		// A hanging indent is a list item's own shape: the label sits out to the
 		// left and everything after it is set in under it. So a line set in
 		// under a block that *opens with a list label* is the rest of that
@@ -1444,6 +1523,11 @@ function isBoundary(text, i, end, math, lineStarts) {
 		if (/^\p{Lu}$/u.test(tok)) {
 			if (/^\s*\p{Lu}\./u.test(text.slice(end))) return false;
 			if (/\p{Lu}\.\s*$/u.test(text.slice(0, i - 1))) return false;
+			// "Crandall and R. Newcomb": a single initial after a surname and
+			// "and". Points named by capitals — "joins A and C. Then" — have a
+			// capital, not a name, before the "and".
+			if (!math[i - 1] && /\p{Lu}\p{Ll}{2,}\s+(?:and|&)\s+$/u.test(text.slice(0, i - 1))
+				&& /^\s*\p{Lu}\p{Ll}/u.test(text.slice(end))) return false;
 		}
 
 		// "1.", "(a)", "2.3.1." or "A.1." opening a list item or a run-in
@@ -1787,6 +1871,7 @@ function analysePage(rawChars, viewBox, opts = {}) {
 	for (const ln of lines) {
 		if (!ln.furniture) ln.kind = classifyLine(ln);
 	}
+	promoteSetOffFormulas(lines, typicalLineGap(lines));
 	keepRunningLines(lines);
 	markContentsEntries(lines);
 	absorbBraceRows(lines);

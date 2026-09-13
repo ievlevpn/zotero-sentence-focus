@@ -19,6 +19,7 @@
 //   pieces: [{ hang: true }]  glyphs from an extension font (big braces,
 //          operators), whose boxes cover only the top of their ink
 //   pieces: [{ raw: true }]  text taken literally, markup characters and all
+//   pieces: [{ font }]  the font this piece's glyphs claim to be in
 
 const assert = require("assert");
 const {
@@ -43,7 +44,7 @@ function layout(lines, viewBox = VIEW) {
 		const start = chars.length;
 		let fragStart = chars.length;
 		const frags = [];
-		let math = !!ln.math, sup = false, sub = false, group = null, dy = 0, pieceSize = null, hang = false;
+		let math = !!ln.math, sup = false, sub = false, group = null, dy = 0, pieceSize = null, hang = false, pieceFont = null;
 		// { rot: 90 } sets the line down the page instead of across it, which
 		// is how an arXiv stamp is printed in the margin.
 		const vertical = ln.rot === 90;
@@ -74,7 +75,7 @@ function layout(lines, viewBox = VIEW) {
 				rect: hang ? [x, y - 0.25 * sz + off, x + w, y + 0.04 * sz + off]
 					: [x, y - 0.2 * sz + off, x + w, y + 0.7 * sz + off],
 				fontSize: sz,
-				fontName: math ? (ln.mathFont || MATH_FONT) : TEXT_FONT,
+				fontName: pieceFont || (math ? (ln.mathFont || MATH_FONT) : TEXT_FONT),
 				bold: !!ln.bold,
 				italic: math,
 				baseline: y + off,
@@ -96,6 +97,7 @@ function layout(lines, viewBox = VIEW) {
 		dy = piece.dy || 0;
 		pieceSize = piece.size || null;
 		hang = !!piece.hang;
+		pieceFont = piece.font || null;
 		for (const c of piece.text) {
 			if (piece.raw) { emit(c); continue; }   // no markup: a literal brace
 			if (c === "«") { math = true; continue; }
@@ -2107,5 +2109,126 @@ assert.deepStrictEqual(texts([
 	assert.ok(displays[0].text.includes("otherwise"), `with both branches: ${got}`);
 	assert.ok(displays[0].rects[0][1] <= 205, `and the band covers the second: ${got}`);
 }
+
+// --- a cases brace from Computer Modern's extension font -------------------------
+
+// CMEX glyphs hang from their baseline: TeX sets the top of a brace there and
+// the rest of it below. Where the font declares an ordinary height, Zotero's
+// box stands on that baseline like a letter's, so its top is well above the ink
+// and its bottom nowhere near the second branch. The font says what the glyph
+// is even where the box does not.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const EX = "JIWGEV+CMEX10";
+	const size = 10;
+	const units = segmentPage(layout([
+		{ text: "equations. Allowing F to be discontinuous (even more, to become infinite), we may", x: 72, y: 257, size },
+		{ text: "write the equation in our form by putting", x: 72, y: 245, size, para: true },
+		{ text: "«F»(«x», «r», «p», «X») «=»", x: 140, y: 214.5, size, mathFont: CM, para: true },
+		{ pieces: [
+			{ text: "{", x: 206, dy: 14, raw: true, font: EX },
+			{ text: "«−» det(«X») «+» «f»(«x», «r», «p») if «X» «≥» 0,", x: 217, dy: 8 },
+		], y: 214.5, size, mathFont: CM, para: true },
+		{ text: "«+∞» otherwise;", x: 217, y: 207, size, mathFont: CM, para: true },
+		{ text: "F is then degenerate elliptic. This follows from the fact that the product is.", x: 72, y: 185, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1, `one formula: ${got}`);
+	assert.ok(displays[0].text.includes("otherwise"), `with both branches: ${got}`);
+}
+
+// --- a formula set off on a line of its own, with words in it ---------------------
+
+// "T(x̂) = convex hull(UT(x̂))": the roman words leave too little of it looking
+// like a formula. But it is centred, has a relation in it, and has space above
+// and below it that a line of the paragraph never has.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "where the set of generalized unit tangents to the set at the point is given by the formula", x: 72, y: 443, size: 10 },
+		{ text: "above, and it is closed; the set is a cone in any case, whatever the regularity of the set.", x: 72, y: 431, size: 10 },
+		{ text: "We turn now to the case that matters most, where the boundary is as smooth as we please.", x: 72, y: 419, size: 10, para: true },
+		{ text: "If O is a smooth N-submanifold of the space with boundary and x in its boundary, then the", x: 72, y: 407, size: 10 },
+		{ text: "generalized tangent cone", x: 72, y: 395, size: 10, para: true },
+		{ text: "«T»~«O»~(«x»ˆ) «=» convex hull(UT~«O»~(«x»ˆ))", x: 213, y: 372, size: 10, mathFont: CM, para: true },
+		{ text: "is a halfspace and O has an exterior normal n at x. In this event, the result says that", x: 72, y: 350, size: 10 },
+		{ text: "the multiplier is nonnegative, and we conclude what we set out to show in the end, which", x: 72, y: 338, size: 10 },
+		{ text: "is the statement of the lemma. Life is more complex when the multiplier is positive, and", x: 72, y: 326, size: 10 },
+		{ text: "we treat that case separately in what follows.", x: 72, y: 314, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	assert.ok(units.some((u) => u.kind === "display" && u.text.includes("convex hull")), `the formula stands alone: ${got}`);
+	assert.ok(units.some((u) => u.kind === "text" && u.text.startsWith("is a halfspace")), `and the prose after it: ${got}`);
+}
+
+// --- a left-hand number raised onto a line of its own -------------------------------
+
+// When a formula is too wide for its number, the number is set on a line of
+// its own above it — here with the brace of a cases formula landing in the
+// middle of it in reading order, "(2.1{5)".
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const EX = "JIWGEV+CMEX10";
+	const units = segmentPage(layout([
+		{ text: "second fundamental form of the boundary at the point (oriented with the exterior normal)", x: 72, y: 631, size: 10 },
+		{ text: "extended to the space by setting it to zero. Then", x: 72, y: 619.5, size: 10, para: true },
+		{ pieces: [
+			{ text: "(2.1", x: 72, dy: 11 },
+			{ text: "{", x: 97, dy: 5, raw: true, font: EX },
+			{ text: "5)", x: 93, dy: 11 },
+			{ text: "(«p», «X») «∈» «J»(«x») if and only if either «p» «=» «Dφ»(«x») and «X» «≥» 0, or", x: 110 },
+		], y: 594, size: 10, mathFont: CM, para: true },
+		{ text: "«p» «=» «Dφ»(«x») «−» «λn», «λ» «>» 0 and «PXP» «≥» «λS».", x: 97, y: 580.5, size: 10, mathFont: CM, para: true },
+		{ text: "Noting that the projection kills the normal, we see that the claim holds for all of them.", x: 72, y: 556, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1, `one formula: ${got}`);
+	assert.ok(displays[0].text.includes("either") && displays[0].text.includes("λS"), `both rows: ${got}`);
+	assert.ok(!displays[0].text.includes("2.1"), `without its number: ${got}`);
+	assert.ok(units.some((u) => u.kind === "text" && u.text.endsWith("Then")), `the lead-in stops at Then: ${got}`);
+}
+
+// --- prose after a display, flush with the margin -------------------------------
+
+// "where A = D²φ(x̂) ∈ S(N), N = N₁ + ⋯ + N_k." is mostly formula, and follows
+// a formula closely enough to be taken into it. It opens with a word, at the
+// margin: a display is set in, and never begins with "where".
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "for each positive number there exists a symmetric matrix for every index such that the", x: 72, y: 560, size: 10 },
+		{ text: "and the block diagonal matrix with entries satisfies the bound below, for every choice", x: 72, y: 548, size: 10 },
+		{ text: "of the parameter as above", x: 72, y: 536, size: 10, para: true },
+		{ text: "«−»(1/«ε» «+» ‖«A»‖)«I» «≤» diag(«X»~1~, . . . , «X»~k~) «≤» «A» «+» «εA»^2^", x: 150, y: 499, size: 10, mathFont: CM, para: true },
+		{ text: "where «A» «=» «D»^2^«φ»(«x») «∈» «S»(«N»), «N» «=» «N»~1~ «+» · · · «+» «N»~k~.", x: 72, y: 486, size: 10, mathFont: CM, para: true },
+		{ text: "The norm of the symmetric matrix used in the bound above is the largest eigenvalue.", x: 84, y: 450, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const where = units.find((u) => u.text.startsWith("where"));
+	assert.ok(where && where.kind === "text", `"where ..." is prose: ${got}`);
+	assert.ok(!units.some((u) => u.kind === "display" && u.text.includes("where")), `and not in the formula: ${got}`);
+}
+
+// --- initials across a line break, and before a surname ---------------------------
+
+// "(see also M." / "G. Crandall and R. Newcomb [58])": a capital and a stop at
+// the start of a line looks like a list label, and "and R. Newcomb" like the end
+// of a sentence about R.
+assert.deepStrictEqual(texts([
+	{ text: "The closure was studied by P. L. Lions and H. M. Soner (see also M.", x: 72, y: 700 },
+	{ text: "G. Crandall and R. Newcomb [58]). The closure of the semijets came later.", x: 72, y: 688, para: true },
+]), [
+	"The closure was studied by P. L. Lions and H. M. Soner (see also M. G. Crandall and R. Newcomb [58]).",
+	"The closure of the semijets came later.",
+]);
+// ...while points named by single capitals still end a sentence.
+assert.deepStrictEqual(texts([{ text: "The segment joins A and C. Then the claim follows at once.", para: true }]),
+	["The segment joins A and C.", "Then the claim follows at once."]);
 
 console.log("all tests passed");
