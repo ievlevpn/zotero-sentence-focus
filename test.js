@@ -1942,4 +1942,45 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 		`from the first branch to the last: ${got}`);
 }
 
+// --- equation numbers on the left -------------------------------------------
+
+// Some styles set the number at the left margin, a gulf away from the formula.
+// Read as the start of a line of prose, "(1.2) −" ended on an operator and
+// pulled the whole display into itself as the rest of its expression.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "We will say either that a function is degenerate elliptic or that the equation holds,", x: 72, y: 450, size: 10 },
+		{ text: "and the term proper is used in a similar fashion throughout the paper that follows.", x: 72, y: 438, size: 10, para: true },
+		{ text: "Example 1.2. Degenerate elliptic linear equations. Example 1.1 immediately ex-", x: 72, y: 432, size: 10, hyphen: true },
+		{ text: "tends to the more general linear equation", x: 72, y: 420, size: 10, para: true },
+		{ pieces: [{ text: "(1.2)", x: 72 }, { text: "«−»", x: 132 }], y: 390, size: 10, para: true },
+		{ text: "«N» «∑»", x: 143, y: 400, size: 10, mathFont: CM },
+		{ text: "«i»,«j»=1", x: 141, y: 379, size: 7, mathFont: CM, para: true },
+		{ text: "«a»~i,j~(«x») «∂»^2^«u»", x: 162, y: 390, size: 10, mathFont: CM, para: true },
+		{ text: "«∂x»~i~«∂x»~j~", x: 191, y: 383, size: 10, mathFont: CM, para: true },
+		{ text: "+ «c»(«x»)«u»(«x») «=» «f»(«x»)", x: 291, y: 390, size: 10, mathFont: CM },
+		{ text: "where the matrix is symmetric; the corresponding operator is then given by", x: 72, y: 358, size: 10 },
+		{ pieces: [{ text: "(1.3)", x: 72 }, { text: "«F»(«x», «r», «p», «X») «=» «−» trace(«A»(«x»)«X») «+»", x: 124 }],
+			y: 328, size: 10, mathFont: CM, para: true },
+		{ text: "«b»~i~(«x»)«p»~i~ «+» «c»(«x»)«r» «−» «f»(«x»).", x: 285, y: 328, size: 10, mathFont: CM, para: true },
+		{ text: "In this case, the operator is degenerate elliptic if and only if the matrix is positive.", x: 84, y: 299, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 2, `two formulas: ${got}`);
+	assert.ok(displays[0].text.includes("−") && displays[0].text.includes("f(x)"), `the first whole: ${got}`);
+	assert.ok(displays.every((u) => !/\(1\.[23]\)/.test(u.text)), `the numbers are dropped: ${got}`);
+	assert.ok(units.some((u) => u.kind === "text" && u.text.endsWith("general linear equation")),
+		`the lead-in is its own sentence: ${got}`);
+}
+
+// ...while a list item, whose label sits a word space from its text, is not one.
+assert.deepStrictEqual(texts([
+	{ text: "(1) every cycle bounds a face, and the bound is sharp in the plane.", para: true },
+	{ text: "(2) no cycle is longer than seven, which we show below in detail.", para: true },
+]), ["(1) every cycle bounds a face, and the bound is sharp in the plane.",
+	"(2) no cycle is longer than seven, which we show below in detail."]);
+
 console.log("all tests passed");

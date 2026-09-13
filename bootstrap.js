@@ -413,6 +413,13 @@ function makeLine(chars, from, to) {
 		if (ch.math || RELATION_RE.test(ch.c)) formulaish[i - from] = true;
 	}
 	const variableFrac = formulaish.filter(Boolean).length / glyphs;
+	// Per glyph, what it counted as — kept so the fractions can be taken again
+	// without an equation number once one is found (see markEquationNumbers).
+	const glyphKinds = new Uint8Array(to - from + 1);
+	for (let i = from; i <= to; i++) {
+		if (/\s/.test(chars[i].c)) continue;
+		glyphKinds[i - from] = 1 | (formulaish[i - from] ? 2 : 0) | (chars[i].math ? 4 : 0);
+	}
 	// Zotero normalises inline rects per fragment, so a line it cut has pieces
 	// with mismatched bands. One band for the whole line keeps the highlight
 	// from stepping up and down across a formula.
@@ -463,6 +470,7 @@ function makeLine(chars, from, to) {
 		standingBaseline: standing.length ? median(standing) : null,
 		standingGlyphs: standing.length,
 		tabular: wideGaps >= 2 || leader || pageNumber,
+		glyphKinds,
 		mathFrac: mathCount / glyphs,
 		variableFrac,
 		formulaFrac: Math.max(mathCount / glyphs, variableFrac),
@@ -475,6 +483,9 @@ function makeLine(chars, from, to) {
 		blank,
 		furniture: blank,
 		eqNumFrom: -1,
+		eqNumTo: -1,
+		leftLabelTo: -1,
+		leftLabelGap: 0,
 		labelFrom: -1,
 		labelGap: 0,
 	};
@@ -499,6 +510,19 @@ function markEquationNumber(chars, line) {
 			line.labelGap = gap;
 		}
 		break; // only the last gap can hold a right-margin label
+	}
+	// Some styles set the number at the left margin instead, and there the
+	// first gap is the one that matters.
+	for (let i = from + 1; i <= to; i++) {
+		const gap = chars[i].rect[0] - chars[i - 1].rect[2];
+		if (gap < 1.2 * line.size) continue;
+		let head = "";
+		for (let j = from; j < i; j++) head += chars[j].c;
+		if (EQ_LABEL_RE.test(head.trim())) {
+			line.leftLabelTo = i - 1;
+			line.leftLabelGap = gap;
+		}
+		break;
 	}
 }
 
@@ -691,6 +715,23 @@ function markFurniture(lines, viewBox) {
 // glyphs, few real words, and either centred in its column or indented from
 // it. Scored rather than hard-gated, so a centred one-line formula with no
 // equation number and an indented multi-line one both land in the same place.
+function remeasureWithoutNumber(line) {
+	const start = line.eqNumTo >= 0 ? line.eqNumTo + 1 : line.from;
+	const end = line.eqNumFrom >= 0 ? line.eqNumFrom - 1 : line.to;
+	let glyphs = 0, formula = 0, math = 0;
+	for (let i = start; i <= end; i++) {
+		const kind = line.glyphKinds[i - line.from];
+		if (!kind) continue;
+		glyphs++;
+		if (kind & 2) formula++;
+		if (kind & 4) math++;
+	}
+	if (!glyphs) return;
+	line.mathFrac = math / glyphs;
+	line.variableFrac = formula / glyphs;
+	line.formulaFrac = Math.max(line.mathFrac, line.variableFrac);
+}
+
 function classifyLine(line) {
 	if (line.formulaFrac < 0.25 || line.textWords >= 4) return "text";
 	const col = line.col || { left: line.rect[0], right: line.rect[2] };
@@ -706,7 +747,7 @@ function classifyLine(line) {
 	// summation sign — and each piece has to stand on its own feet here, or it
 	// falls through to prose and takes the paragraph below it with it.
 	if (line.textWords === 0 && line.formulaFrac >= 0.4) score++;
-	if (line.eqNumFrom >= 0) score += 2;
+	if (line.eqNumFrom >= 0 || line.eqNumTo >= 0) score += 2;
 	return score >= 4 ? "display" : "text";
 }
 
@@ -727,19 +768,31 @@ function markEquationNumbers(lines) {
 		if (line.furniture) continue;
 		const col = line.col;
 		const atRightMargin = !!col && line.rect[2] >= col.right - 0.06 * (col.right - col.left);
+		const atLeftMargin = !!col && line.rect[0] <= col.left + 0.06 * (col.right - col.left);
 
 		if (EQ_LABEL_RE.test(line.text.trim())) {
-			if (!atRightMargin) continue;
 			const height = line.rect[3] - line.rect[1];
-			const hasRowMate = lines.some((other) => other !== line && !other.furniture
-				&& other.col === col && other.rect[2] <= line.rect[0]
-				&& Math.min(other.rect[3], line.rect[3]) - Math.max(other.rect[1], line.rect[1]) > 0.3 * height);
+			const level = (other) => other !== line && !other.furniture && other.col === col
+				&& Math.min(other.rect[3], line.rect[3]) - Math.max(other.rect[1], line.rect[1]) > 0.3 * height;
+			// At the right margin, with the formula to its left; or at the left
+			// margin with the formula a gulf to its right — a list label sits a
+			// word space from its item.
+			const hasRowMate = atRightMargin
+				? lines.some((other) => level(other) && other.rect[2] <= line.rect[0])
+				: atLeftMargin && lines.some((other) => level(other) && other.rect[0] >= line.rect[2] + 2.5 * line.size);
 			if (hasRowMate) line.furniture = true;
 			continue;
 		}
 		if (line.labelFrom >= 0 && (line.labelGap >= 2.5 * line.size || atRightMargin)) {
 			line.eqNumFrom = line.labelFrom;
 		}
+		if (line.leftLabelTo >= 0 && atLeftMargin && line.leftLabelGap >= 2.5 * line.size) {
+			line.eqNumTo = line.leftLabelTo;
+		}
+		// The number's digits are no part of the formula, and on a short piece
+		// — "(1.2) −", the rest of the row cut away at a summation sign — they
+		// outnumber it enough to make it read as prose.
+		if (line.eqNumFrom >= 0 || line.eqNumTo >= 0) remeasureWithoutNumber(line);
 	}
 }
 
@@ -935,7 +988,7 @@ function markTableRows(lines, typicalGap) {
 // table; a formula's condition or a number at the margin does not repeat so.
 function markAlignedRows(lines) {
 	const candidates = lines.filter((line) => !line.furniture && !line.tabular && line.kind === "text"
-		&& line.cells.length === 2 && line.eqNumFrom < 0 && line.textWords >= 1);
+		&& line.cells.length === 2 && line.eqNumFrom < 0 && line.eqNumTo < 0 && line.textWords >= 1);
 	const used = new Set();
 	for (const seed of candidates) {
 		if (used.has(seed)) continue;
@@ -1180,7 +1233,7 @@ function buildBlockText(chars, lines) {
 		lineStarts.push(text.length);
 		const stop = ln.eqNumFrom >= 0 ? ln.eqNumFrom - 1 : ln.to;
 		let lastKept = -1;
-		for (let i = ln.from; i <= stop; i++) {
+		for (let i = ln.eqNumTo >= 0 ? ln.eqNumTo + 1 : ln.from; i <= stop; i++) {
 			const ch = chars[i];
 			if (ch.skip) continue;               // soft hyphen at a line break
 			push(ch.marker ? " " : ch.c, ch.marker ? -1 : i);
@@ -1638,7 +1691,7 @@ function describePage(rawChars, viewBox, opts = {}) {
 			+ ` x ${Math.round(ln.rect[0])}..${Math.round(ln.rect[2])}`
 			+ ` y ${Math.round(ln.rect[1])}..${Math.round(ln.rect[3])}`
 			+ ` size ${ln.size.toFixed(1)} math ${ln.mathFrac.toFixed(2)} var ${ln.variableFrac.toFixed(2)}`
-			+ ` words ${ln.textWords} rel ${ln.hasRelation ? "y" : "n"} eqnum ${ln.eqNumFrom >= 0 ? "y" : "n"}`
+			+ ` words ${ln.textWords} rel ${ln.hasRelation ? "y" : "n"} eqnum ${ln.eqNumFrom >= 0 ? "y" : ln.eqNumTo >= 0 ? "left" : "n"}`
 			+ ` para ${ln.paraEnd ? "y" : "n"}`
 			+ (ln.hangTop !== null ? ` hang ${Math.round(ln.hangTop)}` : "")
 			+ (ln.tableRow !== undefined ? ` row ${ln.tableRow}` : ln.tabular ? " tabular" : ""),

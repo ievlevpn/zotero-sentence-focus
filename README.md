@@ -216,6 +216,15 @@ parenthesis. A gap alone will not do it: `(3)` can sit only a few points clear
 of the formula it numbers, and a gap test tight enough to catch that would
 strip real parentheses out of running prose.
 
+Some styles — the AMS journals among them — set the number at the **left**
+margin instead, a gulf away from the formula. There the first gap on the line is
+the one that matters, and the gulf is what tells the number from a list label,
+which sits a word space from its item. Taken for the start of a line of prose,
+`(1.2) −` ended on an operator and pulled the whole display into itself as the
+rest of its expression. Once a number is found on either side, the line's
+formula fractions are taken again without it: on a short piece of a row cut
+at a summation sign, the number's digits outnumber the formula.
+
 **Sentence boundaries.** Every `.`, `?`, `!` and `…` is a candidate, and most
 of the work is in throwing candidates out:
 
