@@ -409,6 +409,12 @@ Right-click the `¶` button for the in-reader menu, or open
 **Zotero → Settings → Sentence Focus**. Both write the same preferences and
 each follows the other.
 
+**Counter.** The number beside the `¶` button is how many times `]` has moved
+the ruler on since Zotero started — one count per step, across every tab.
+Stepping back with `[` counts nothing, and neither does pressing `]` at the
+end of a document. It is kept in memory only, and **Erase** at the top of the
+menu starts it again from zero. It stays hidden until the first step.
+
 **Reading**
 
 - **Step by** — word, line, sentence or paragraph. All four are worked out from

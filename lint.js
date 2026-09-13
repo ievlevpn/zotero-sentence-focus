@@ -12,7 +12,7 @@ Number Object Promise Proxy Reflect RegExp Set String Symbol TextDecoder TextEnc
 Uint8Array WeakMap WeakRef WeakSet FinalizationRegistry structuredClone queueMicrotask
 Zotero clearTimeout console decodeURIComponent encodeURIComponent escape
 isFinite isNaN module parseFloat parseInt require setTimeout undefined unescape
-if for while switch catch return typeof instanceof new delete void do else
+if for while switch catch return typeof instanceof new delete void do else async await
 function class await yield throw case with super this
 `.trim().split(/\s+/));
 

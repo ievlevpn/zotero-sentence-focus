@@ -2104,22 +2104,23 @@ function pageCount(session) {
 // layer). Bounded so a run of empty pages cannot spin.
 async function move(session, delta) {
 	const total = pageCount(session);
-	if (!total) return;
+	if (!total) return false;
 	let page = session.pageIndex;
 	let units = await unitsAt(session, page);
 	let i = session.unitIndex + delta;
 	let hops = 0;
 	while ((i < 0 || i >= units.length) && hops++ < 64) {
 		page += delta > 0 ? 1 : -1;
-		if (page < 0 || page >= total) return;
+		if (page < 0 || page >= total) return false;
 		units = await unitsAt(session, page);
 		i = delta > 0 ? 0 : units.length - 1;
 	}
-	if (!units.length || i < 0 || i >= units.length) return;
+	if (!units.length || i < 0 || i >= units.length) return false;
 	session.pageIndex = page;
 	session.unitIndex = i;
 	paint(session, true);
 	prefetch(session);
+	return true;
 }
 
 // Keep the neighbouring pages warm so crossing a page boundary is not the one
@@ -2230,7 +2231,9 @@ function startSession(reader, doc, btn) {
 		if (!delta) return;
 		e.preventDefault();
 		e.stopPropagation();
-		enqueue(session, () => move(session, delta));
+		enqueue(session, async () => {
+			if (await move(session, delta) && delta > 0) countRead();
+		});
 	};
 	const onClick = (e) => {
 		if (!pref("followClick")) return;
@@ -2305,6 +2308,53 @@ function toggle(reader, doc, btn) {
 	setButtonState(btn, !!session);
 }
 
+// --- reading counter -------------------------------------------------------
+
+// How many steps forward have been taken since Zotero started, across every
+// tab. Only `]` counts, and only when it moved: stepping back to reread
+// something is not reading more, and pressing on at the end of a document goes
+// nowhere. Kept in memory — a session is a sitting, not a lifetime.
+let readCount = 0;
+// Every place the count is shown — the badge beside each tab's button, the
+// menu — held weakly, so a closed tab's toolbar is not kept alive by a number.
+const counterViews = new Set();
+
+function countRead() {
+	readCount++;
+	renderCounters();
+}
+
+function eraseCount() {
+	readCount = 0;
+	renderCounters();
+}
+
+function showCount(el) {
+	counterViews.add(new WeakRef(el));
+	renderCounter(el);
+}
+
+function renderCounters() {
+	for (const ref of [...counterViews]) {
+		const el = ref.deref();
+		// Gone with its tab, or left behind when the toolbar was rebuilt.
+		if (!el || !el.isConnected || !el.ownerDocument.defaultView) { counterViews.delete(ref); continue; }
+		renderCounter(el);
+	}
+}
+
+function renderCounter(el) {
+	const noun = readCount === 1 ? "sentence" : "sentences";
+	if (el.dataset.sfzCounter === "badge") {
+		el.textContent = String(readCount);
+		// Not `hidden`: the reader's toolbar styles its children's display.
+		el.style.display = readCount === 0 ? "none" : "";
+		el.title = `${readCount} ${noun} read this session — right-click ¶ to erase`;
+	} else {
+		el.textContent = `${readCount} ${noun} read this session`;
+	}
+}
+
 // --- in-reader settings menu -----------------------------------------------
 
 // The Settings pane holds the same knobs, but step size and colour are things
@@ -2333,6 +2383,7 @@ const MENU_CSS = `
  border-radius:3px;padding:0 3px}
 .sfz-version{float:right;opacity:.7;font-variant-numeric:tabular-nums}
 .sfz-diag{margin-top:10px;width:100%;border-radius:5px;padding:4px 8px}
+.sfz-count{flex:1;font-variant-numeric:tabular-nums}
 `;
 
 let openMenuPanel = null;   // { el, cleanup } of the single open menu, or null
@@ -2407,6 +2458,19 @@ function buildMenu(doc, reader) {
 		row.append(input, name);
 		panel.append(row);
 	};
+
+	heading("Reading");
+	{
+		const row = make("div", "sfz-row");
+		const count = make("span", "sfz-count");
+		count.dataset.sfzCounter = "menu";
+		showCount(count);
+		const erase = make("button", "sfz-chip", "Erase");
+		erase.title = "Start counting from zero again.";
+		erase.addEventListener("click", eraseCount);
+		row.append(count, erase);
+		panel.append(row);
+	}
 
 	heading("Step by");
 	chips("granularity", [
@@ -2551,7 +2615,19 @@ function renderButton(event) {
 		e.stopPropagation();
 		openMenu(doc, btn, reader);
 	});
-	append(btn);
+
+	const badge = doc.createElement("span");
+	badge.dataset.sfzCounter = "badge";
+	badge.style.cssText = "font:11px system-ui,sans-serif;font-variant-numeric:tabular-nums;"
+		+ "opacity:.7;align-self:center;margin-inline:-2px 4px;cursor:default;user-select:none;";
+	badge.addEventListener("click", () => openMenu(doc, btn, reader));
+	badge.addEventListener("contextmenu", (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		openMenu(doc, btn, reader);
+	});
+	showCount(badge);
+	append(btn, badge);
 }
 
 // What each preference costs to change. Style and colour are read on every
@@ -2608,6 +2684,11 @@ function startup({ id, version: pluginVersion, rootURI }) {
 function shutdown() {
 	closeMenu();
 	for (const reader of [...sessions.keys()]) stopSession(reader);
+	for (const ref of counterViews) {
+		const el = ref.deref();
+		if (el && el.dataset.sfzCounter === "badge") try { el.remove(); } catch (e) { /* tab gone */ }
+	}
+	counterViews.clear();
 	dropInjectedStyles();
 	pageCache.clear();
 	for (const o of prefObservers) {
@@ -2638,5 +2719,6 @@ if (typeof module !== "undefined") {
 		lineRanges, wordRanges, GRANULARITIES,
 		solidColor, toPercent, toUserBox, pageAspect, padBoxes, PADDING, mergeTiny, blendFor,
 		pageLuminance, CSS, STYLES,
+		countRead, eraseCount, showCount,
 	};
 }

@@ -25,6 +25,7 @@ const {
 	segmentPage, splitSentences, prevToken, mergeTiny, solidColor, charsToLines, mergeBoxes,
 	materialize, toPercent, toUserBox, pageAspect, wordRanges, lineRanges,
 	GRANULARITIES, STYLES, CSS, describePage, padBoxes, LIST_LABEL_RE,
+	countRead, eraseCount, showCount,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -1728,6 +1729,32 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.ok(low <= inkBottom + 0.2, `the bottom of the brace: band ${low.toFixed(1)} vs ink ${inkBottom.toFixed(1)}`);
 	const above = units.find((u) => u.text.startsWith("and the scheme"));
 	assert.ok(high <= above.rects[0][1], "still below the line above");
+}
+
+// --- the reading counter -------------------------------------------------------
+
+// Every view of the count follows it: the badge beside each tab's button and
+// the line in the menu. A view whose tab has gone is let go of.
+{
+	const view = (kind) => ({
+		dataset: { sfzCounter: kind }, textContent: "", style: { display: "" }, title: "",
+		isConnected: true, ownerDocument: { defaultView: {} },
+	});
+	const badge = view("badge"), menu = view("menu"), closed = view("badge");
+	for (const el of [badge, menu, closed]) showCount(el);
+	assert.strictEqual(badge.style.display, "none", "nothing read yet: the badge stays out of the way");
+	closed.isConnected = false;
+	countRead(); countRead(); countRead();
+	assert.strictEqual(badge.textContent, "3");
+	assert.strictEqual(badge.style.display, "");
+	assert.strictEqual(menu.textContent, "3 sentences read this session");
+	assert.strictEqual(closed.textContent, "0", "a closed tab's badge is no longer updated");
+	eraseCount();
+	assert.strictEqual(menu.textContent, "0 sentences read this session");
+	assert.strictEqual(badge.style.display, "none", "erased: hidden again");
+	countRead();
+	assert.strictEqual(menu.textContent, "1 sentence read this session");
+	eraseCount();
 }
 
 console.log("all tests passed");
