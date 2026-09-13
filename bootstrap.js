@@ -755,6 +755,21 @@ function markFurniture(lines, viewBox) {
 // glyphs, few real words, and either centred in its column or indented from
 // it. Scored rather than hard-gated, so a centred one-line formula with no
 // equation number and an indented multi-line one both land in the same place.
+// A display too wide for its margin crowds its number: "(1.9) L_{α,β}u = −"
+// leaves a space, not a gulf. A list item's label is followed by words; a
+// number followed by nothing but formula numbers that formula.
+function numbersFormula(line) {
+	if (!/^\s*\(\d{1,3}(?:\.\d{1,3}){0,2}[a-z]?\)/.test(line.text)) return false;
+	let glyphs = 0, formula = 0;
+	for (let i = line.leftLabelTo + 1; i <= line.to; i++) {
+		const kind = line.glyphKinds[i - line.from];
+		if (!kind) continue;
+		glyphs++;
+		if (kind & 2) formula++;
+	}
+	return glyphs >= 2 && formula / glyphs >= 0.6 && line.textWords === 0;
+}
+
 function remeasureWithoutNumber(line) {
 	const start = line.eqNumTo >= 0 ? line.eqNumTo + 1 : line.from;
 	const end = line.eqNumFrom >= 0 ? line.eqNumFrom - 1 : line.to;
@@ -826,7 +841,8 @@ function markEquationNumbers(lines) {
 		if (line.labelFrom >= 0 && (line.labelGap >= 2.5 * line.size || atRightMargin)) {
 			line.eqNumFrom = line.labelFrom;
 		}
-		if (line.leftLabelTo >= 0 && atLeftMargin && (line.leftLabelGap >= 2.5 * line.size || line.leftLabelRaised)) {
+		if (line.leftLabelTo >= 0 && atLeftMargin
+			&& (line.leftLabelGap >= 2.5 * line.size || line.leftLabelRaised || numbersFormula(line))) {
 			line.eqNumTo = line.leftLabelTo;
 		}
 		// The number's digits are no part of the formula, and on a short piece
@@ -1047,11 +1063,17 @@ function absorbBraceRows(lines) {
 				if (other.col !== line.col || other.rot !== line.rot) continue;
 				if (other.rect[2] > opener.left + other.size || other.rect[2] < opener.left - 3 * other.size) continue;
 				if (other.rect[3] > opener.top + 0.5 * other.size || other.rect[3] < opener.top - 3 * other.size) continue;
+				// On the delimiter's own row: a brace set as one glyph is small,
+				// its top at most a couple of ems above the axis it is centred
+				// on. A piece of the row below — a denominator, the next line
+				// of the formula — would put the axis far too low and stretch
+				// the brace down into whatever follows.
+				const rise = opener.top - (other.standingBaseline + 0.25 * other.size);
+				if (rise <= 0 || rise > 2 * other.size) continue;
 				if (!lead || other.rect[2] > lead.rect[2]) lead = other;
 			}
 			if (!lead) continue;
 			const axis = lead.standingBaseline + 0.25 * lead.size;
-			if (opener.top <= axis) continue;
 			spans.push({ col: line.col, rot: line.rot, left: opener.left, right: opener.right,
 				bottom: 2 * axis - opener.top, top: opener.top, size: lead.size, members: new Set([line]) });
 		}
@@ -1060,6 +1082,8 @@ function absorbBraceRows(lines) {
 		if (span.top - span.bottom < 2 * span.size) continue;
 		const beside = lines.filter((line) => !line.furniture && !span.members.has(line)
 			&& line.col === span.col && line.rot === span.rot && !line.tabular
+			// A branch is never a full line of text.
+			&& !(line.col && line.rect[2] - line.rect[0] > 0.8 * (line.col.right - line.col.left))
 			&& (line.rect[1] + line.rect[3]) / 2 > span.bottom && (line.rect[1] + line.rect[3]) / 2 < span.top);
 		if (!beside.some((line) => line.kind === "display")) continue;
 		for (const line of beside) line.kind = "display";
@@ -1695,17 +1719,30 @@ function displayBand(block, lines) {
 	// the ink its box leaves out (see hangsBelowBaseline): it reaches as far
 	// below the axis as its top stands above it. Its top is exact, with none of
 	// the room a letter's box keeps above the letter, so it is given some.
-	let row = null;
-	for (const line of block.lines) {
-		if (line.standingGlyphs && (!row || line.standingGlyphs > row.standingGlyphs)) row = line;
-	}
-	if (row) {
-		const axis = row.standingBaseline + 0.25 * row.size;
-		for (const line of members) {
-			if (line.hangTop === null || line.hangTop <= axis) continue;
-			top = Math.max(top, line.hangTop + 0.12 * row.size);
-			bottom = Math.min(bottom, 2 * axis - line.hangTop);
+	//
+	// Each glyph is centred on the axis of its own row: a formula set over two
+	// rows has two axes, and measuring a brace on the top row against the
+	// bottom row's axis stretches it into the text below. The row is the line
+	// of the formula whose axis the glyph's top stands a little above — no
+	// more than a couple of ems, which is as tall as a single glyph gets.
+	//
+	// Which lines are neighbours is settled before the band is stretched, so
+	// that a stretch too far cannot make the line it lands on look like part
+	// of the formula.
+	const core = [bottom, top];
+	for (const line of members) {
+		if (line.hangTop === null) continue;
+		let row = null;
+		for (const other of block.lines) {
+			if (!other.standingGlyphs) continue;
+			const rise = line.hangTop - (other.standingBaseline + 0.25 * other.size);
+			if (rise <= 0 || rise > 2 * other.size) continue;
+			if (!row || other.standingGlyphs > row.standingGlyphs) row = other;
 		}
+		if (!row) continue;
+		const axis = row.standingBaseline + 0.25 * row.size;
+		top = Math.max(top, line.hangTop + 0.12 * row.size);
+		bottom = Math.min(bottom, 2 * axis - line.hangTop);
 	}
 	for (const line of lines) {
 		if (line.blank || line.furniture || line.col !== block.col) continue;
@@ -1717,8 +1754,8 @@ function displayBand(block, lines) {
 		// line above it, and a line level with the formula overlaps the
 		// formula's own numerator and denominator.
 		const middle = (line.rect[1] + line.rect[3]) / 2;
-		if (middle >= bottom && middle <= top) continue;
-		if (middle > top) top = Math.min(top, line.rect[1]);
+		if (middle >= core[0] && middle <= core[1]) continue;
+		if (middle > core[1]) top = Math.min(top, line.rect[1]);
 		else bottom = Math.max(bottom, line.rect[3]);
 	}
 	// Formula lines hemmed in by pieces of another formula can be clamped down

@@ -155,6 +155,15 @@ the axis of the piece set just to its left, `F(x, r, p, X) =`, it reaches as
 far below that axis as it stands above — and from there it is a brace like any
 other, so `+∞ otherwise;` joins its formula.
 
+The axis has to be the delimiter's **own row's**. A formula set over two rows
+has two axes, and a bracket on the top row measured against the row below came
+out stretched far past the formula, taking the two lines of prose under it into
+the formula with it. A glyph set whole is small — its top at most a couple of
+ems above the axis it is centred on — so a row further down than that is not
+its row; and a branch of a cases formula is never a full line of text, so a
+full line is never taken into one. The band is guarded the same way: which
+lines are its neighbours is settled before any glyph stretches it.
+
 Not every extension font gives itself away by its box. Computer Modern's CMEX,
 in many PDFs, declares an ordinary height, and then a brace's box stands on the
 baseline like a letter's, its top well above the ink and its bottom nowhere
@@ -266,7 +275,10 @@ own above the formula, and the layout still hands both over as one line —
 sometimes with the formula's brace landing in the middle of the number in
 reading order, `(2.1{5)`. The pieces of a big delimiter are passed over in
 reading the number, and a number standing half a line or more above what
-follows it needs no gulf to be one.
+follows it needs no gulf to be one. Nor does one crowded by a display too wide
+for its margin — `(1.9) L_{α,β}u = −` leaves a space, not a gulf — when what
+follows the number is nothing but formula; a list item's label is followed by
+words.
 
 A display is also set in from the margin and never begins with a word, so a
 line at the margin that opens with one — *where A = D²φ(x̂) ∈ S(N), N = N₁ + ⋯ +

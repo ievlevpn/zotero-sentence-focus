@@ -2231,4 +2231,121 @@ assert.deepStrictEqual(texts([
 assert.deepStrictEqual(texts([{ text: "The segment joins A and C. Then the claim follows at once.", para: true }]),
 	["The segment joins A and C.", "Then the claim follows at once."]);
 
+// --- a page rebuilt from a diagnostics report ------------------------------------
+
+// Lines as a report prints them — x and y extents, size, main font, text,
+// paragraph break, and the top of any hanging glyph — spread back into glyphs.
+// Coarser than a hand-built page, but it carries a real page's geometry, which
+// is where the surprises have been.
+function fromReport(rows) {
+	const chars = [];
+	for (const [x0, x1, y0, y1, size, font, text, para, hang] of rows) {
+		const glyphs = [...text].filter((c) => c !== " ");
+		const w = (x1 - x0) / Math.max(1, glyphs.length);
+		let x = x0;
+		for (const c of text) {
+			if (c === " ") { if (chars.length) chars[chars.length - 1].spaceAfter = true; continue; }
+			let fontName = font, base = y0 + 0.25 * size, rect = [x, y0, x + w, y1];
+			if (/[α-ωΑ-Ω∂∆]/.test(c)) fontName = "FSUMJD+CMMI10";
+			// A bracket on a line with a hanging glyph is that glyph: an
+			// extension-font bracket whose box stands on its baseline.
+			if (hang && /[()]/.test(c)) { fontName = "JIWGEV+CMEX10"; base = hang - 1; rect = [x, base - 2.5, x + w, base + 7.5]; }
+			chars.push({ c, rect, inlineRect: [x, y0, x + w, y1], fontSize: size, fontName, bold: false, italic: false,
+				baseline: base, rotation: 0, spaceAfter: false, lineBreakAfter: false, paragraphBreakAfter: false, ignorable: false });
+			x += w;
+		}
+		chars[chars.length - 1].lineBreakAfter = true;
+		chars[chars.length - 1].paragraphBreakAfter = para;
+	}
+	return chars;
+}
+
+// A bracket on the top row of a two-row formula was measured against the axis
+// of the row below, stretched down past the formula, and took the two lines of
+// prose under it into the formula — "which is the nonparametric formulation…"
+// highlighted as part of the Lévi equation.
+{
+	const PAGE = [0, 0, 612, 792];
+	const units = segmentPage(fromReport([
+		[72, 431, 689, 699, 10, "KOUGOH+CMR10", "which is proper if A ≥ 0 and b is nondecreasing with respect to r. Two relevant", false],
+		[72, 143, 677, 687, 10, "KOUGOH+CMR10", "special cases are", true],
+		[198, 304, 664, 674, 10, "FSUMJD+CMMI10", "−ν∆u + f (x, u, Du) = 0", true],
+		[72, 431, 645, 655, 10, "KOUGOH+CMR10", "with ν > 0 and f nondecreasing in u, which may be regarded as a first-order", false],
+		[72, 431, 633, 643, 10, "KOUGOH+CMR10", "Hamilton-Jacobi equation perturbed by an additional “viscosity” term −ν∆u (equa-", false],
+		[72, 410, 621, 631, 10, "KOUGOH+CMR10", "tions of this type arise in optimal stochastic control), and the L ́evi’s equation", true],
+		[98, 106, 588, 598, 10, "PXYEAU+CMSY10", "−", true],
+		[108, 132, 594, 611, 10, "FSUMJD+CMMI10", "( ∂2u", true, 605],
+		[116, 132, 579, 592, 10, "FSUMJD+CMMI10", "∂x21", true],
+		[136, 163, 588, 606, 10, "FSUMJD+CMMI10", "+ ∂2u", true],
+		[147, 162, 579, 592, 10, "FSUMJD+CMMI10", "∂x22", true],
+		[164, 181, 602, 614, 10, "JIWGEV+CMEX10", ")(", true, 608],
+		[181, 196, 588, 598, 10, "KOUGOH+CMR10", "1+", true],
+		[198, 220, 594, 611, 10, "FSUMJD+CMMI10", "( ∂u", false, 605],
+		[207, 222, 580, 591, 10, "FSUMJD+CMMI10", "∂x3", true],
+		[224, 244, 600, 614, 10, "JIWGEV+CMEX10", ")2)", true, 608],
+		[246, 273, 588, 606, 10, "FSUMJD+CMMI10", "− ∂2u", true],
+		[257, 272, 579, 592, 10, "FSUMJD+CMMI10", "∂x23", true],
+		[276, 306, 594, 614, 10, "JIWGEV+CMEX10", "(( ∂u", true, 608],
+		[292, 308, 580, 591, 10, "FSUMJD+CMMI10", "∂x1", true],
+		[309, 321, 600, 611, 10, "JIWGEV+CMEX10", ")2", true, 605],
+		[323, 331, 588, 598, 10, "KOUGOH+CMR10", "+", true],
+		[333, 356, 594, 611, 10, "FSUMJD+CMMI10", "( ∂u", false, 605],
+		[342, 357, 580, 591, 10, "FSUMJD+CMMI10", "∂x2", true],
+		[359, 379, 600, 614, 10, "JIWGEV+CMEX10", ")2)", true, 608],
+		[118, 158, 556, 574, 10, "KOUGOH+CMR10", "+ 2 ∂2u", true],
+		[134, 165, 549, 559, 10, "FSUMJD+CMMI10", "∂x1∂x3", true],
+		[169, 191, 563, 580, 10, "FSUMJD+CMMI10", "( ∂u", false, 574],
+		[177, 193, 549, 559, 10, "FSUMJD+CMMI10", "∂x3", true],
+		[198, 209, 563, 573, 10, "FSUMJD+CMMI10", "∂u", false],
+		[196, 211, 549, 559, 10, "FSUMJD+CMMI10", "∂x1", true],
+		[215, 240, 556, 573, 10, "FSUMJD+CMMI10", "− ∂u", true],
+		[226, 242, 549, 559, 10, "FSUMJD+CMMI10", "∂x2", true],
+		[243, 293, 556, 580, 10, "KOUGOH+CMR10", ") + 2 ∂2u", true, 574],
+		[269, 301, 549, 559, 10, "FSUMJD+CMMI10", "∂x2∂x3", true],
+		[304, 326, 563, 580, 10, "FSUMJD+CMMI10", "( ∂u", false, 574],
+		[312, 328, 549, 559, 10, "FSUMJD+CMMI10", "∂x3", true],
+		[333, 345, 563, 573, 10, "FSUMJD+CMMI10", "∂u", false],
+		[331, 346, 549, 559, 10, "FSUMJD+CMMI10", "∂x2", true],
+		[350, 375, 556, 573, 10, "FSUMJD+CMMI10", "+ ∂u", true],
+		[361, 377, 549, 559, 10, "FSUMJD+CMMI10", "∂x1", true],
+		[379, 386, 570, 580, 10, "JIWGEV+CMEX10", ")", true, 574],
+		[389, 407, 556, 566, 10, "KOUGOH+CMR10", "= 0,", true],
+		[72, 431, 525, 536, 10, "KOUGOH+CMR10", "which is the nonparametric formulation for a hypersurface in C2 with vanishing", false],
+		[72, 363, 513, 523, 10, "KOUGOH+CMR10", "L ́evi’s form. Note that in this example F = − trace(A(p)X) where", true],
+		[153, 184, 477, 487, 10, "KOUGOH+CMR10", "A(p) =", true],
+		[204, 339, 487, 500, 10, "ZFEOEJ+CMR7", "1 + p23 0 p3p1 − p2", true],
+		[215, 339, 475, 488, 10, "ZFEOEJ+CMR7", "0 1 + p23 p3p2 + p1", true],
+		[197, 334, 463, 476, 10, "ZFEOEJ+CMR7", "p3p1 − p2 p3p2 + p1 p21 + p22", true],
+		[72, 253, 441, 451, 10, "KOUGOH+CMR10", "so that A ≥ 0 but det(A(p)) = 0 for all p.", true],
+		[72, 431, 422, 432, 10, "KOUGOH+CMR10", "Example 1.6. Hamilton-Jacobi-Bellman and Isaacs equations. Hamilton-Jacobi-", false],
+		[72, 431, 410, 420, 10, "KOUGOH+CMR10", "Bellman and Isaacs equations are, respectively, the fundamental partial differential", false],
+	]), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text.slice(0, 40)]));
+	const prose = units.find((u) => u.text.startsWith("which is the nonparametric"));
+	assert.ok(prose && prose.kind === "text", `the prose after the formula is prose: ${got}`);
+	const levi = units.find((u) => u.kind === "display" && u.text.includes("∂x21"));
+	assert.ok(levi && !levi.text.includes("which"), `and not part of the formula: ${got}`);
+	assert.ok(levi.rects.every((r) => r[1] >= prose.rects[0][3] - 0.5), `whose band stops above it: ${JSON.stringify(levi.rects)}`);
+	assert.ok(units.some((u) => u.kind === "display" && u.text.startsWith("A(p)")), `the matrix is its own formula: ${got}`);
+}
+
+// A number crowded by a wide display still numbers it, while a list item's
+// label, followed by words, is still part of its item.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "where all the coefficients are bounded with respect to the parameters in question here,", x: 72, y: 290, size: 10 },
+		{ text: "and the operators are proper for every choice of them, as we assume from now on. Then", x: 72, y: 278, size: 10 },
+		{ text: "we consider the operator given by", x: 72, y: 266, size: 10, para: true },
+		{ pieces: [{ text: "(1.9)", x: 72 }, { text: "«L»~«α»,«β»~«u» «=» «−»", x: 101 }], y: 245, size: 10, mathFont: CM, para: true },
+		{ text: "«a»~«ij»~(«x»)«∂»~«ij»~«u» «+» «b»~«i»~(«x»)«∂»~«i»~«u» «+» «c»(«x»)«u» «−» «f»(«x»)", x: 172, y: 245, size: 10, mathFont: CM, para: true },
+		{ text: "where all the coefficients are bounded with respect to the parameters in question.", x: 72, y: 211, size: 10, para: true },
+		{ text: "(1) every cycle bounds a face, and the bound is sharp in the plane.", x: 72, y: 190, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	assert.ok(units.some((u) => u.kind === "display" && !u.text.includes("(1.9)")), `the number is dropped: ${got}`);
+	assert.ok(units.some((u) => u.text.startsWith("(1) every cycle")), `the list label stays: ${got}`);
+}
+
 console.log("all tests passed");
