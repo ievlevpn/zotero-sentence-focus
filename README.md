@@ -124,6 +124,22 @@ So the band covers everything **standing on the row** — the pieces of a brace
 included, reaching a line further on each pass until nothing more is found —
 and is then clamped so that it never crosses onto a neighbouring line.
 
+**Pieces with words in them.** A piece of a formula can carry a roman word —
+`trace`, `if` — and arrive as a line of its own, and a piece with a word is
+normally kept out of a formula's row: that is what stops a sentence's tail
+being swallowed by the display above it. The exception is a piece that shares a
+baseline with a formula *and overlaps it*, starting before the piece beside it
+ends. Prose never stands in the middle of a formula like that.
+
+**Prose crowded with symbols.** The opposite mistake: a line of running text
+can be mostly formula — *corresponds to max{F(x, u, Du, D²u), |Du| − g(x)} =
+0.* — and score as a display. What it does not do is stand apart. A line flush
+with the prose margin, directly under a full-width line that the layout did not
+end a paragraph on (or that stops on a comma or an operator), is that paragraph
+carrying on, and each line put back can vouch for the one after it. The margin
+is measured from the column's wide prose lines rather than taken from the
+column itself, which a formula overhanging the measure can stretch.
+
 **Cases.** The branches of a cases formula stand beside a tall brace, and a
 branch can carry words — *otherwise*, *if x is odd*, a type name — enough to
 read as prose and cut the formula in two. The brace settles it: nothing but a

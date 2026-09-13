@@ -1983,4 +1983,62 @@ assert.deepStrictEqual(texts([
 ]), ["(1) every cycle bounds a face, and the bound is sharp in the plane.",
 	"(2) no cycle is longer than seven, which we show below in detail."]);
 
+// --- a formula piece that carries a word --------------------------------------
+
+// `trace` is a roman word inside a formula, and a piece carrying a word is never
+// taken into a formula's row — that is what keeps a sentence's tail out of it.
+// But this piece is interleaved with the formula on its own baseline: it starts
+// before the piece beside it ends. Prose never shares a line with a formula so.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "is a typical equation of the kind. The corresponding nonlinearities F have the form", x: 72, y: 691, size: 10, para: true },
+		{ text: "and", x: 72, y: 647, size: 10, para: true },
+		// The layout hands these two over in the other order, so they stay two lines.
+		{ pieces: [{ text: "«α»", x: 196, dy: -7 }, { text: "inf[ «−» trace(«A»~α,β~(«x»)«X»)", x: 206 }],
+			y: 627, size: 10, mathFont: CM, para: true },
+		{ text: "«F»(«x», «r», «p», «X») «=» sup", x: 123, y: 627, size: 10, mathFont: CM, para: true },
+		{ text: "«+» ⟨«b»~α,β~(«x»), «p»⟩ «+» «c»~α,β~(«x»)«r» «−» «f»~α,β~(«x»)],", x: 223, y: 605, size: 10, mathFont: CM, para: true },
+		{ text: "each of which is clearly also proper. Notice that in the first case F is convex in", x: 72, y: 585, size: 10 },
+		{ text: "all of its arguments while in the second case this is not so, as we show below.", x: 72, y: 574, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1, `the formula is one unit: ${got}`);
+	assert.ok(displays[0].text.includes("sup") && displays[0].text.includes("trace") && displays[0].text.includes("],"),
+		`all three pieces: ${got}`);
+}
+
+// --- prose lines crowded with formulas ----------------------------------------
+
+// A line of running text can be mostly symbols — "corresponds to max{F(x, u, Du,
+// D²u), |Du| − g(x)} = 0." — and score as a displayed formula. What it does
+// not do is stand apart: it starts at the margin, straight under a full line
+// that the layout did not end a paragraph on.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const units = segmentPage(layout([
+		{ text: "In accordance with remarks made in the previous example, if F is proper then so", x: 72, y: 326, size: 10 },
+		{ text: "are the equations above.", x: 72, y: 314, size: 10, para: true },
+		{ text: "Likewise, gradient constraints may be imposed in this way. A typical example", x: 84, y: 302, size: 10 },
+		{ text: "corresponds to max[«F»(«x», «u», «Du», «D»^2^«u»), |«Du»| «−» «g»(«x»)] «=» 0.", x: 72, y: 290, size: 10, mathFont: CM, para: true },
+		{ text: "Example 1.8. Functions of the eigenvalues. For «X» «∈» «S»(«N») we let «λ»~1~(«X»), . . . , «λ»~N~(«X»)", x: 72, y: 272, size: 10, mathFont: CM },
+		{ text: "be its eigenvalues arranged in increasing order. If g is a function of them that", x: 72, y: 260, size: 10, para: true },
+		{ text: "is defined on the space and is nondecreasing in each of them, then «F»(«x», «r», «p», «X») «=»", x: 72, y: 248, size: 10, mathFont: CM },
+		{ text: "«g»(«x», «r», «p», «−λ»~1~(«X»), . . . , «−λ»~N~(«X»)) is proper. For instance, «F»(«X») «=» «−» max[«λ»~1~(«X»), . . . ,", x: 72, y: 236, size: 10, mathFont: CM, para: true },
+		{ text: "«−λ»~N~(«X»), «F»(«X») «=» «−» min[«λ»~1~(«X»), . . . , «λ»~N~(«X»)] «=» «−λ»~1~(«X») and «F»(«X») «=» «−»(«λ»~2~(«X»))^3^", x: 72, y: 224, size: 10, mathFont: CM },
+		{ text: "are degenerate elliptic. Another example is", x: 72, y: 213, size: 10, para: true },
+		{ text: "«F»(«x», «r», «p», «X») «=» «−»|trace(«X»)|^«m»−1^ trace(«X») «+» |«p»|^«q»^ «+» «c»(«x»)«r» «−» «f»(«x»)", x: 114, y: 193, size: 10, mathFont: CM, para: true },
+		{ text: "where c ≥ 0 and m, q > 0. The corresponding equation is written out below.", x: 72, y: 174, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	assert.ok(units.some((u) => u.kind === "text" && u.text.startsWith("A typical example") && u.text.endsWith("= 0.")),
+		`the sentence runs through its formula: ${got}`);
+	assert.ok(units.some((u) => u.text.startsWith("For instance") && u.text.endsWith("are degenerate elliptic.")),
+		`and so does this one: ${got}`);
+	assert.ok(units.some((u) => u.kind === "display" && u.text.includes("trace")), `the real display is still one: ${got}`);
+}
+
 console.log("all tests passed");

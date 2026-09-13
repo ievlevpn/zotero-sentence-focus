@@ -829,17 +829,57 @@ function displayRows(lines) {
 	return rows;
 }
 
-// Once a row is known to carry a displayed formula, everything standing in it
-// belongs to that formula — the tail after a summation sign, the limits above
-// and below, the numerator of a fraction. Judging each piece on its own cannot
-// work: the numerator of `1/|R(X)|` is the single character "1", which has no
-// letters to read as variables and no symbols to read as operators, and scores
-// as prose however it is measured. What settles it is where the piece stands.
-//
-// Absorbing one piece widens the row, which can bring another within reach, so
-// this runs until nothing more moves. A line is only taken if it sits *inside*
-// the row horizontally — a line of prose reaches well past a formula's span —
-// and a line carrying several real words is prose whatever it overlaps.
+// A piece of a formula can carry a word — `trace`, `if` — and arrive as a line
+// of its own. What gives it away is that it shares a baseline with a formula
+// and overlaps it: it starts before the formula piece beside it ends. A line of
+// prose never stands in the middle of a formula like that.
+function interleaved(line, lines) {
+	const height = line.rect[3] - line.rect[1];
+	return lines.some((other) => other !== line && other.kind === "display" && !other.furniture
+		&& other.col === line.col && other.rot === line.rot
+		&& Math.min(other.rect[2], line.rect[2]) - Math.max(other.rect[0], line.rect[0]) > 0
+		&& Math.min(other.rect[3], line.rect[3]) - Math.max(other.rect[1], line.rect[1])
+			> 0.5 * Math.min(height, other.rect[3] - other.rect[1]));
+}
+
+// A line of running text can be crowded with symbols — "corresponds to
+// max{F(x, u, Du, D²u), |Du| − g(x)} = 0." — and score as a displayed formula.
+// What such a line does not do is stand apart. A display is set off: indented
+// or centred, or at least after a break. A line flush with the margin, straight
+// under a full line of the same paragraph, is that paragraph carrying on. The
+// line above has either no paragraph break after it or stops mid-expression, on
+// a comma or an operator; each line put back can vouch for the next.
+function keepRunningLines(lines) {
+	const byCol = new Map();
+	for (const line of lines) {
+		if (line.furniture || line.kind !== "text" || line.rot) continue;
+		if (!byCol.has(line.col)) byCol.set(line.col, []);
+		byCol.get(line.col).push(line);
+	}
+	// Where the column's prose actually starts and stops: the column itself can
+	// be wider, stretched by a formula that overhangs the measure.
+	const measure = new Map();
+	for (const [col, prose] of byCol) {
+		const wide = prose.filter((l) => l.rect[2] - l.rect[0] > 0.6 * ((col && col.right - col.left) || 1));
+		if (wide.length >= 3) measure.set(col, { left: median(wide.map((l) => l.rect[0])), right: median(wide.map((l) => l.rect[2])) });
+	}
+	let previous = null;
+	for (const line of lines) {
+		if (line.furniture) continue;
+		const m = measure.get(line.col);
+		if (m && previous && line.kind === "display" && previous.kind === "text" && previous.col === line.col
+			&& !line.rot && !previous.rot && line.textWords >= 1
+			&& line.eqNumFrom < 0 && line.eqNumTo < 0
+			&& Math.abs(line.rect[0] - m.left) <= 0.5 * line.size
+			&& previous.rect[2] >= m.right - 1.5 * line.size
+			&& (!previous.paraEnd || /[,=+−(\[{]\s*$/u.test(previous.text))
+			&& previous.rect[1] - line.rect[3] < 1.2 * line.size) {
+			line.kind = "text";
+		}
+		previous = line;
+	}
+}
+
 // The glyphs a tall delimiter is built from: the brace, bracket and parenthesis
 // pieces, or the ordinary bracket characters a math font sets at size.
 const DELIMITER_PIECE_RE = /^[\s{}()[\]|‖\u239b-\u23b3\u27e8\u27e9]+$/u;
@@ -879,6 +919,17 @@ function absorbBraceRows(lines) {
 	}
 }
 
+// Once a row is known to carry a displayed formula, everything standing in it
+// belongs to that formula — the tail after a summation sign, the limits above
+// and below, the numerator of a fraction. Judging each piece on its own cannot
+// work: the numerator of `1/|R(X)|` is the single character "1", which has no
+// letters to read as variables and no symbols to read as operators, and scores
+// as prose however it is measured. What settles it is where the piece stands.
+//
+// Absorbing one piece widens the row, which can bring another within reach, so
+// this runs until nothing more moves. A line is only taken if it sits *inside*
+// the row horizontally — a line of prose reaches well past a formula's span —
+// and a line carrying several real words is prose whatever it overlaps.
 function absorbDisplayRows(lines) {
 	let rows = displayRows(lines);
 	if (!rows.length) return;
@@ -895,7 +946,7 @@ function absorbDisplayRows(lines) {
 		// a piece must either carry no words — an operator name like `min`
 		// does not count as one — or be set in script type.
 		if (line.furniture || line.kind === "display") continue;
-		if (line.textWords > 0 && line.size >= 0.85 * bodySize) continue;
+		if (line.textWords > 0 && line.size >= 0.85 * bodySize && !interleaved(line, lines)) continue;
 			const height = line.rect[3] - line.rect[1];
 			const width = line.rect[2] - line.rect[0];
 			if (height <= 0) continue;
@@ -1658,6 +1709,7 @@ function analysePage(rawChars, viewBox, opts = {}) {
 	for (const ln of lines) {
 		if (!ln.furniture) ln.kind = classifyLine(ln);
 	}
+	keepRunningLines(lines);
 	absorbBraceRows(lines);
 	absorbDisplayRows(lines);
 	markAlignedRows(lines);
