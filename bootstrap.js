@@ -2232,7 +2232,7 @@ function startSession(reader, doc, btn) {
 		e.preventDefault();
 		e.stopPropagation();
 		enqueue(session, async () => {
-			if (await move(session, delta) && delta > 0) countRead();
+			if (await move(session, delta) && delta > 0) countRead(session.reader);
 		});
 	};
 	const onClick = (e) => {
@@ -2278,6 +2278,17 @@ function startSession(reader, doc, btn) {
 		session.handlers.push(() => container.removeEventListener("scroll", onScroll));
 	}
 
+	// Closing the tab unloads its documents. Letting go of the session there
+	// rather than at the next sweep is what lets the tab's reader — and with it
+	// its reading count — be collected as soon as the tab is gone.
+	const onUnload = () => stopSession(reader);
+	for (const d of docs) {
+		const win = d.defaultView;
+		if (!win) continue;
+		win.addEventListener("unload", onUnload, { once: true });
+		session.handlers.push(() => { try { win.removeEventListener("unload", onUnload); } catch (e) { /* gone */ } });
+	}
+
 	sessions.set(reader, session);
 	enqueue(session, () => focusPage(session, session.pageIndex, "visible"));
 	return session;
@@ -2287,7 +2298,7 @@ function stopSession(reader) {
 	const session = sessions.get(reader);
 	if (!session) return;
 	sessions.delete(reader);
-	clearPaint(session);
+	try { clearPaint(session); } catch (e) { /* its document is unloading */ }
 	for (const off of session.handlers) {
 		try { off(); } catch (e) { /* document already gone */ }
 	}
@@ -2310,48 +2321,68 @@ function toggle(reader, doc, btn) {
 
 // --- reading counter -------------------------------------------------------
 
-// How many steps forward have been taken since Zotero started, across every
-// tab. Only `]` counts, and only when it moved: stepping back to reread
-// something is not reading more, and pressing on at the end of a document goes
-// nowhere. Kept in memory — a session is a sitting, not a lifetime.
-let readCount = 0;
-// Every place the count is shown — the badge beside each tab's button, the
-// menu — held weakly, so a closed tab's toolbar is not kept alive by a number.
-const counterViews = new Set();
+// How many steps forward have been taken in a tab. Only `]` counts, and only
+// when it moved: stepping back to reread something is not reading more, and
+// pressing on at the end of a document goes nowhere. Each tab keeps its own
+// count, and turning the ruler off and on again does not reset it.
+//
+// Keyed weakly by the reader, so closing the tab takes its count with it —
+// nothing here holds a closed tab alive, and there is no teardown to forget.
+// Each count also holds, weakly, every place it is shown: the badge beside the
+// tab's button, and the menu while it is open.
+const readCounts = new WeakMap();   // reader -> { count, views: Set<WeakRef> }
+// Every badge in every tab, only so that shutdown can take them off toolbars.
+const badges = new Set();
 
-function countRead() {
-	readCount++;
-	renderCounters();
+function counterOf(reader) {
+	let counter = readCounts.get(reader);
+	if (!counter) {
+		counter = { count: 0, views: new Set() };
+		readCounts.set(reader, counter);
+	}
+	return counter;
 }
 
-function eraseCount() {
-	readCount = 0;
-	renderCounters();
+function countRead(reader) {
+	counterOf(reader).count++;
+	renderCounters(reader);
 }
 
-function showCount(el) {
-	counterViews.add(new WeakRef(el));
-	renderCounter(el);
+function eraseCount(reader) {
+	counterOf(reader).count = 0;
+	renderCounters(reader);
 }
 
-function renderCounters() {
-	for (const ref of [...counterViews]) {
+function showCount(reader, el) {
+	const ref = new WeakRef(el);
+	counterOf(reader).views.add(ref);
+	if (el.dataset.sfzCounter === "badge") badges.add(ref);
+	renderCounter(el, counterOf(reader).count);
+}
+
+function renderCounters(reader) {
+	const counter = counterOf(reader);
+	for (const ref of [...counter.views]) {
 		const el = ref.deref();
 		// Gone with its tab, or left behind when the toolbar was rebuilt.
-		if (!el || !el.isConnected || !el.ownerDocument.defaultView) { counterViews.delete(ref); continue; }
-		renderCounter(el);
+		if (!el || !el.isConnected || !el.ownerDocument.defaultView) {
+			counter.views.delete(ref);
+			badges.delete(ref);
+			continue;
+		}
+		renderCounter(el, counter.count);
 	}
 }
 
-function renderCounter(el) {
-	const noun = readCount === 1 ? "sentence" : "sentences";
+function renderCounter(el, count) {
+	const noun = count === 1 ? "sentence" : "sentences";
 	if (el.dataset.sfzCounter === "badge") {
-		el.textContent = String(readCount);
+		el.textContent = String(count);
 		// Not `hidden`: the reader's toolbar styles its children's display.
-		el.style.display = readCount === 0 ? "none" : "";
-		el.title = `${readCount} ${noun} read this session — right-click ¶ to erase`;
+		el.style.display = count === 0 ? "none" : "";
+		el.title = `${count} ${noun} read in this tab — right-click ¶ to erase`;
 	} else {
-		el.textContent = `${readCount} ${noun} read this session`;
+		el.textContent = `${count} ${noun} read in this tab`;
 	}
 }
 
@@ -2464,10 +2495,10 @@ function buildMenu(doc, reader) {
 		const row = make("div", "sfz-row");
 		const count = make("span", "sfz-count");
 		count.dataset.sfzCounter = "menu";
-		showCount(count);
+		showCount(reader, count);
 		const erase = make("button", "sfz-chip", "Erase");
 		erase.title = "Start counting from zero again.";
-		erase.addEventListener("click", eraseCount);
+		erase.addEventListener("click", () => eraseCount(reader));
 		row.append(count, erase);
 		panel.append(row);
 	}
@@ -2626,7 +2657,7 @@ function renderButton(event) {
 		e.stopPropagation();
 		openMenu(doc, btn, reader);
 	});
-	showCount(badge);
+	showCount(reader, badge);
 	append(btn, badge);
 }
 
@@ -2684,11 +2715,11 @@ function startup({ id, version: pluginVersion, rootURI }) {
 function shutdown() {
 	closeMenu();
 	for (const reader of [...sessions.keys()]) stopSession(reader);
-	for (const ref of counterViews) {
+	for (const ref of badges) {
 		const el = ref.deref();
-		if (el && el.dataset.sfzCounter === "badge") try { el.remove(); } catch (e) { /* tab gone */ }
+		if (el) try { el.remove(); } catch (e) { /* tab gone */ }
 	}
-	counterViews.clear();
+	badges.clear();
 	dropInjectedStyles();
 	pageCache.clear();
 	for (const o of prefObservers) {

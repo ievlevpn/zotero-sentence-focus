@@ -410,10 +410,12 @@ Right-click the `¶` button for the in-reader menu, or open
 each follows the other.
 
 **Counter.** The number beside the `¶` button is how many times `]` has moved
-the ruler on since Zotero started — one count per step, across every tab.
-Stepping back with `[` counts nothing, and neither does pressing `]` at the
-end of a document. It is kept in memory only, and **Erase** at the top of the
-menu starts it again from zero. It stays hidden until the first step.
+the ruler on in that tab — one count per step. Each tab counts for itself, and
+closing the tab discards its count: it is held weakly against the tab's reader,
+so nothing is left behind to clean up. Turning the ruler off and on keeps it.
+Stepping back with `[` counts nothing, and neither does pressing `]` at the end
+of a document. **Erase** at the top of the menu starts it again from zero. It
+stays hidden until the first step.
 
 **Reading**
 
