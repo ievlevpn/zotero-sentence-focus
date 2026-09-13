@@ -849,20 +849,26 @@ function interleaved(line, lines) {
 // under a full line of the same paragraph, is that paragraph carrying on. The
 // line above has either no paragraph break after it or stops mid-expression, on
 // a comma or an operator; each line put back can vouch for the next.
-function keepRunningLines(lines) {
+// Where each column's prose actually starts and stops, from its wide lines of
+// text. The column itself can be wider, stretched by a formula overhanging the
+// measure.
+function proseMeasure(lines) {
 	const byCol = new Map();
 	for (const line of lines) {
 		if (line.furniture || line.kind !== "text" || line.rot) continue;
 		if (!byCol.has(line.col)) byCol.set(line.col, []);
 		byCol.get(line.col).push(line);
 	}
-	// Where the column's prose actually starts and stops: the column itself can
-	// be wider, stretched by a formula that overhangs the measure.
 	const measure = new Map();
 	for (const [col, prose] of byCol) {
 		const wide = prose.filter((l) => l.rect[2] - l.rect[0] > 0.6 * ((col && col.right - col.left) || 1));
 		if (wide.length >= 3) measure.set(col, { left: median(wide.map((l) => l.rect[0])), right: median(wide.map((l) => l.rect[2])) });
 	}
+	return measure;
+}
+
+function keepRunningLines(lines) {
+	const measure = proseMeasure(lines);
 	let previous = null;
 	for (const line of lines) {
 		if (line.furniture) continue;
@@ -877,6 +883,45 @@ function keepRunningLines(lines) {
 			line.kind = "text";
 		}
 		previous = line;
+	}
+}
+
+// "7.D.", "8", "10.", "A.1", "IV." opening a line: a section's number.
+const SECTION_LABEL_RE = /^\s*(?:\d{1,3}(?:\.(?:\d{1,3}|[A-Z]))*\.?|[A-Z](?:\.\d{1,3})+\.?|[A-Z]\.|[IVXLC]{1,6}\.)\s+\S/u;
+
+// A table of contents without page numbers or leaders: the entries run on with
+// no paragraph breaks and no full stops, so nothing ends one before the next
+// begins. What they do have is a section number at the head of each, on a line
+// that stops well short of the measure — and three such lines in a row is a
+// list of entries, where a numbered line or two inside a paragraph is not. A
+// short line just after the run that starts no deeper than its entries do is
+// the last entry of it ("APPENDIX ..."); a wrapped title, set in under its
+// title, is not a new entry and carries on the one above.
+function markContentsEntries(lines) {
+	const measure = proseMeasure(lines);
+	const flow = lines.filter((line) => !line.furniture && !line.rot);
+	const short = (line) => {
+		const m = measure.get(line.col);
+		return !!m && line.kind === "text" && line.rect[2] < m.right - 3 * line.size;
+	};
+	const tight = (a, b) => a.col === b.col && a.rect[1] - b.rect[3] < 1.2 * b.size && a.rect[1] > b.rect[1];
+	let i = 0;
+	while (i < flow.length) {
+		let j = i;
+		while (j < flow.length && short(flow[j]) && SECTION_LABEL_RE.test(flow[j].text)
+			&& (j === i || tight(flow[j - 1], flow[j]))) j++;
+		if (j - i >= 3) {
+			const deepest = Math.max(...flow.slice(i, j).map((line) => line.rect[0]));
+			for (let k = i; k < j; k++) flow[k].entryStart = true;
+			while (j < flow.length && short(flow[j]) && tight(flow[j - 1], flow[j])
+				&& flow[j].rect[0] <= deepest + flow[j].size && /^\s*\p{Lu}/u.test(flow[j].text)) {
+				flow[j].entryStart = true;
+				j++;
+			}
+			i = j;
+		} else {
+			i = Math.max(i + 1, j);
+		}
 	}
 }
 
@@ -1147,6 +1192,8 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 		if (cur && !inRow && (ln.tabular || previous && previous.tabular)) cur = null;
 		// Cells of one table row are one line; the row after it is another.
 		if (cur && previous && previous.tableRow !== ln.tableRow) cur = null;
+		// An entry of a contents list begins a block of its own.
+		if (cur && ln.entryStart) cur = null;
 		// A line may open with a bracketed number without being a list item:
 		// "(16) equals 1 for every closed path" is a cross-reference carrying a
 		// sentence over. What tells them apart is the line before — an item
@@ -1228,7 +1275,7 @@ function joinContinuations(blocks, typicalGap) {
 		// formula may be pulled back into the sentence before it.
 		const openExpression = /[=+×÷<>≤≥≈≡∼∈∉⊂⊆→↦−–—-]\s*$/u.test(at);
 		// A list item is its own thing, whatever the lead-in before it ended on.
-		if (LIST_LABEL_RE.test(bt)) continue;
+		if (LIST_LABEL_RE.test(bt) || (b.lines[0] && b.lines[0].entryStart)) continue;
 		// A hanging indent is a list item's own shape: the label sits out to the
 		// left and everything after it is set in under it. So a line set in
 		// under a block that *opens with a list label* is the rest of that
@@ -1710,6 +1757,7 @@ function analysePage(rawChars, viewBox, opts = {}) {
 		if (!ln.furniture) ln.kind = classifyLine(ln);
 	}
 	keepRunningLines(lines);
+	markContentsEntries(lines);
 	absorbBraceRows(lines);
 	absorbDisplayRows(lines);
 	markAlignedRows(lines);

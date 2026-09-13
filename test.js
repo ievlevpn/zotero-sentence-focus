@@ -2041,4 +2041,42 @@ assert.deepStrictEqual(texts([
 	assert.ok(units.some((u) => u.kind === "display" && u.text.includes("trace")), `the real display is still one: ${got}`);
 }
 
+// --- a contents list with no page numbers ----------------------------------------
+
+// Entries with neither a leader nor a page number, and no paragraph breaks
+// between them: nothing ended one before the next began. Each opens with its
+// section number, and each is a short line.
+{
+	const PAGE = [0, 0, 612, 792];
+	const units = segmentPage(layout([
+		{ text: "7.D. A remark on (BC) in the classical sense", x: 90, y: 691, size: 10 },
+		{ text: "7.E. Fully nonlinear boundary conditions", x: 90, y: 679, size: 10 },
+		{ text: "8. Parabolic problems", x: 77, y: 667, size: 10 },
+		{ text: "9. Singular equations: An example from geometry", x: 77, y: 655, size: 10 },
+		{ text: "10. Applications and perspectives", x: 72, y: 643, size: 10 },
+		{ text: "APPENDIX The proof of Theorem 3.2", x: 72, y: 631, size: 10, para: true },
+		{ text: "1. Examples", x: 220, y: 609, size: 10, para: true },
+		{ text: "We will record here many examples of degenerate elliptic equations mentioning,", x: 84, y: 591, size: 10 },
+		{ text: "when appropriate, areas in which they arise. The reader is invited to scan the list", x: 72, y: 579, size: 10 },
+		{ text: "and pause where interested. It is possible to proceed to the next section at any", x: 72, y: 567, size: 10 },
+		{ text: "stage of the reading.", x: 72, y: 555, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	for (const entry of ["7.D. A remark on (BC) in the classical sense", "7.E. Fully nonlinear boundary conditions",
+		"8. Parabolic problems", "9. Singular equations: An example from geometry",
+		"10. Applications and perspectives", "APPENDIX The proof of Theorem 3.2"]) {
+		assert.ok(units.some((u) => u.text === entry), `"${entry}" is an entry of its own: ${got}`);
+	}
+	assert.ok(units.some((u) => u.text === "The reader is invited to scan the list and pause where interested."),
+		`the prose is untouched: ${got}`);
+}
+
+// ...but short lines of ragged prose are not a contents list, and neither is a
+// numbered line or two inside a paragraph.
+assert.deepStrictEqual(texts([
+	{ text: "The first short line of a poem", x: 72, y: 700 },
+	{ text: "and 2 of its lines that follow", x: 72, y: 688 },
+	{ text: "3 times over, ragged on the right.", x: 72, y: 676, para: true },
+]), ["The first short line of a poem and 2 of its lines that follow 3 times over, ragged on the right."]);
+
 console.log("all tests passed");

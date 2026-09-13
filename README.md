@@ -385,6 +385,16 @@ with a leader, or with a bare number after a wide gap, is now a row. A year
 ending a sentence has no gap before it, an ellipsis is three stops rather than a
 leader, and an equation number is bracketed, so none of those qualifies.
 
+Some contents lists have neither leaders nor page numbers, and no paragraph
+breaks between entries either, so nothing ended one before the next began.
+They do have a **section number** at the head of each entry — `7.D.`, `8.`,
+`10.` — on a line that stops well short of the measure. Three such lines in a
+row, at ordinary leading, are a list of entries, and each begins a block of its
+own; a numbered line or two inside a paragraph is not a list. A short
+capitalised line right after the run, set no deeper than its entries
+(`APPENDIX …`), is the list's last entry, while a wrapped title set in under
+its own title carries on the entry above.
+
 A row of displayed maths is laid out like a table row and must not be caught by
 this; where the pieces are separate, what separates them is words. A table's
 cells carry them, a formula's pieces do not, so a row needs two cells with a
