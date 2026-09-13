@@ -409,7 +409,7 @@ Right-click the `¶` button for the in-reader menu, or open
 **Zotero → Settings → Sentence Focus**. Both write the same preferences and
 each follows the other.
 
-**Counter.** The number beside the `¶` button is how many times `]` has moved
+**Counter.** The small number in the corner of the `¶` button is how many times `]` has moved
 the ruler on in that tab — one count per step. Each tab counts for itself, and
 closing the tab discards its count: it is held weakly against the tab's reader,
 so nothing is left behind to clean up. Turning the ruler off and on keeps it.

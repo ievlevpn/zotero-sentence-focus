@@ -2328,8 +2328,8 @@ function toggle(reader, doc, btn) {
 //
 // Keyed weakly by the reader, so closing the tab takes its count with it —
 // nothing here holds a closed tab alive, and there is no teardown to forget.
-// Each count also holds, weakly, every place it is shown: the badge beside the
-// tab's button, and the menu while it is open.
+// Each count also holds, weakly, every place it is shown: the badge in the
+// corner of the tab's button, and the menu while it is open.
 const readCounts = new WeakMap();   // reader -> { count, views: Set<WeakRef> }
 // Every badge in every tab, only so that shutdown can take them off toolbars.
 const badges = new Set();
@@ -2380,7 +2380,10 @@ function renderCounter(el, count) {
 		el.textContent = String(count);
 		// Not `hidden`: the reader's toolbar styles its children's display.
 		el.style.display = count === 0 ? "none" : "";
-		el.title = `${count} ${noun} read in this tab — right-click ¶ to erase`;
+		if (el.parentNode) {
+			el.parentNode.title = `Sentence focus — ${count} ${noun} read in this tab. `
+				+ "Click to turn on, [ and ] to step, right-click for settings";
+		}
 	} else {
 		el.textContent = `${count} ${noun} read in this tab`;
 	}
@@ -2647,18 +2650,18 @@ function renderButton(event) {
 		openMenu(doc, btn, reader);
 	});
 
+	// The count rides in the button's corner. The toolbar gives each element a
+	// plugin appends a slot of its own, so a sibling lands under the button
+	// rather than beside it; inside the button it takes no room at all, and
+	// clicks go straight through it to the button.
+	btn.style.position = "relative";
 	const badge = doc.createElement("span");
 	badge.dataset.sfzCounter = "badge";
-	badge.style.cssText = "font:11px system-ui,sans-serif;font-variant-numeric:tabular-nums;"
-		+ "opacity:.7;align-self:center;margin-inline:-2px 4px;cursor:default;user-select:none;";
-	badge.addEventListener("click", () => openMenu(doc, btn, reader));
-	badge.addEventListener("contextmenu", (e) => {
-		e.preventDefault();
-		e.stopPropagation();
-		openMenu(doc, btn, reader);
-	});
+	badge.style.cssText = "position:absolute;right:0;bottom:1px;pointer-events:none;"
+		+ "font:600 8.5px/1 system-ui,sans-serif;font-variant-numeric:tabular-nums;opacity:.8;";
+	btn.append(badge);
 	showCount(reader, badge);
-	append(btn, badge);
+	append(btn);
 }
 
 // What each preference costs to change. Style and colour are read on every
