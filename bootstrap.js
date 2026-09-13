@@ -552,7 +552,10 @@ function markEquationNumber(chars, line) {
 		const next = chars[i + 1];
 		if (hangsBelowBaseline(next)) continue;
 		const gap = next.rect[0] - ch.rect[2];
-		if (EQ_LABEL_RE.test(head.trim()) && gap >= 0.3 * line.size) {
+		// A raised number ends where the formula below it begins, with no space
+		// between them; the step down in baseline is the break instead.
+		const stepsDown = labelBases.length > 0 && median(labelBases) - next.baseline >= 0.5 * line.size;
+		if (EQ_LABEL_RE.test(head.trim()) && (gap >= 0.3 * line.size || stepsDown)) {
 			const rest = [];
 			for (let j = i + 1; j <= to; j++) {
 				if (chars[j].c.trim() && !hangsBelowBaseline(chars[j]) && chars[j].size >= 0.85 * line.size) rest.push(chars[j].baseline);

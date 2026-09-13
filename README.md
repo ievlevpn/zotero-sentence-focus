@@ -275,7 +275,9 @@ own above the formula, and the layout still hands both over as one line —
 sometimes with the formula's brace landing in the middle of the number in
 reading order, `(2.1{5)`. The pieces of a big delimiter are passed over in
 reading the number, and a number standing half a line or more above what
-follows it needs no gulf to be one. Nor does one crowded by a display too wide
+follows it needs no gulf to be one — nor even a space: on the page this was
+seen on, the formula begins exactly where the raised number ends, and the step
+down in baseline is the only break between them. Nor does one crowded by a display too wide
 for its margin — `(1.9) L_{α,β}u = −` leaves a space, not a gulf — when what
 follows the number is nothing but formula; a list item's label is followed by
 words.

@@ -2237,25 +2237,50 @@ assert.deepStrictEqual(texts([{ text: "The segment joins A and C. Then the claim
 // paragraph break, and the top of any hanging glyph — spread back into glyphs.
 // Coarser than a hand-built page, but it carries a real page's geometry, which
 // is where the surprises have been.
-function fromReport(rows) {
+function fromReport(rows, opts = {}) {
 	const chars = [];
 	for (const [x0, x1, y0, y1, size, font, text, para, hang] of rows) {
+		const start = chars.length;
 		const glyphs = [...text].filter((c) => c !== " ");
 		const w = (x1 - x0) / Math.max(1, glyphs.length);
 		let x = x0;
-		for (const c of text) {
-			if (c === " ") { if (chars.length) chars[chars.length - 1].spaceAfter = true; continue; }
+		const cs = [...text];
+		for (let j = 0; j < cs.length; j++) {
+			const c = cs[j];
+			if (c === " ") { if (chars.length > start) chars[chars.length - 1].spaceAfter = true; continue; }
 			let fontName = font, base = y0 + 0.25 * size, rect = [x, y0, x + w, y1];
-			if (/[α-ωΑ-Ω∂∆]/.test(c)) fontName = "FSUMJD+CMMI10";
+			// Maths as TeX sets it: Greek, operators and relations, and a letter
+			// standing alone — a variable — in the maths fonts.
+			const lone = /\p{L}/u.test(c) && !/\p{L}/u.test(cs[j - 1] || "") && !/\p{L}/u.test(cs[j + 1] || "");
+			if (lone || /[α-ωΑ-Ω∂∆∈∉≤≥=<>+−×⊂⊃∋→]/.test(c)) fontName = "FSUMJD+CMMI10";
 			// A bracket on a line with a hanging glyph is that glyph: an
 			// extension-font bracket whose box stands on its baseline.
-			if (hang && /[()]/.test(c)) { fontName = "JIWGEV+CMEX10"; base = hang - 1; rect = [x, base - 2.5, x + w, base + 7.5]; }
+			if (hang && (opts.hangs || /[()]/).test(c)) { fontName = "JIWGEV+CMEX10"; base = hang - 1; rect = [x, base - 2.5, x + w, base + 7.5]; }
 			chars.push({ c, rect, inlineRect: [x, y0, x + w, y1], fontSize: size, fontName, bold: false, italic: false,
 				baseline: base, rotation: 0, spaceAfter: false, lineBreakAfter: false, paragraphBreakAfter: false, ignorable: false });
 			x += w;
 		}
 		chars[chars.length - 1].lineBreakAfter = true;
 		chars[chars.length - 1].paragraphBreakAfter = para;
+		// { raised: [row, n] }: that row's first n glyphs are a number set a line
+		// above its formula, and the formula starts right where the number ends
+		// — no space between them, as on the page this was taken from.
+		if (opts.raised && rows[opts.raised[0]][6] === text && rows[opts.raised[0]][2] === y0) {
+			const own = chars.slice(start).filter((ch) => !/CMEX/.test(ch.fontName));
+			const label = own.slice(0, opts.raised[1]), rest = own.slice(opts.raised[1]);
+			let x = x0;
+			for (const ch of label) {
+				ch.rect = [x, y1 - size, x + 4.5, y1];
+				ch.inlineRect = [x, y0, x + 4.5, y1];
+				ch.baseline = y1 - 0.75 * size;
+				x += 4.5;
+			}
+			const shift = x - rest[0].rect[0];
+			for (const ch of rest) {
+				ch.rect = [ch.rect[0] + shift, ch.rect[1], ch.rect[2] + shift, ch.rect[3]];
+				ch.inlineRect = [ch.inlineRect[0] + shift, ch.inlineRect[1], ch.inlineRect[2] + shift, ch.inlineRect[3]];
+			}
+		}
 	}
 	return chars;
 }
@@ -2346,6 +2371,27 @@ function fromReport(rows) {
 	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
 	assert.ok(units.some((u) => u.kind === "display" && !u.text.includes("(1.9)")), `the number is dropped: ${got}`);
 	assert.ok(units.some((u) => u.text.startsWith("(1) every cycle")), `the list label stays: ${got}`);
+}
+
+// The raised number on the real page: no space at all between "(2.15)" and
+// "(p", since the formula starts where the number, a line above it, ends.
+{
+	const PAGE = [0, 0, 612, 792];
+	const units = segmentPage(fromReport([
+		[72, 431, 689, 699, 10, "KOUGOH+CMR10", "When unraveled, the above considerations lead to the following conclusion. Let", false],
+		[72, 431, 677, 688, 10, "KOUGOH+CMR10", "O be an N -submanifold of RN with boundary, xˆ ∈ ∂O, ∂O be twice differentiable", false],
+		[72, 431, 664, 675, 10, "KOUGOH+CMR10", "at xˆ, ~n be the outward normal, T∂O(xˆ) be the tangent plane to ∂O at xˆ, and", false],
+		[72, 431, 629, 639, 10, "KOUGOH+CMR10", "second fundamental form of ∂O at xˆ (oriented with the exterior normal to O)", false],
+		[72, 219, 617, 628, 10, "KOUGOH+CMR10", "extended to RN by S~n = 0. Then", false],
+		[72, 414, 591, 615, 10, "KOUGOH+CMR10", "(2.1{5)(p, X) ∈ J 2,+O φ(xˆ) if and only if either p = Dφ(xˆ) and D2φ(xˆ) ≤ X, or", true, 604],
+		[97, 345, 578, 590, 10, "FSUMJD+CMMI10", "p = Dφ(xˆ) − λ~n, λ > 0 and P D2φ(xˆ)P ≤ P XP − λS.", true],
+		[72, 431, 553, 568, 10, "KOUGOH+CMR10", "Noting that P ~n ⊗ ~nP = 0, we see that if (p, X) ∈ J2,+O u(xˆ), S ≤ 0, and λ > 0, then", true],
+	], { raised: [5, 6], hangs: /[{]/ }), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text.slice(0, 40)]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1, `one formula: ${got}`);
+	assert.ok(displays[0].text.includes("either") && !displays[0].text.includes("2.1"), `both rows, no number: ${got}`);
+	assert.ok(units.some((u) => u.kind === "text" && u.text.endsWith("Then")), `Then ends its sentence: ${got}`);
 }
 
 console.log("all tests passed");
