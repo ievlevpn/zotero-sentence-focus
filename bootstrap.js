@@ -787,6 +787,45 @@ function displayRows(lines) {
 // this runs until nothing more moves. A line is only taken if it sits *inside*
 // the row horizontally — a line of prose reaches well past a formula's span —
 // and a line carrying several real words is prose whatever it overlaps.
+// The glyphs a tall delimiter is built from: the brace, bracket and parenthesis
+// pieces, or the ordinary bracket characters a math font sets at size.
+const DELIMITER_PIECE_RE = /^[\s{}()[\]|‖\u239b-\u23b3\u27e8\u27e9]+$/u;
+
+// A cases formula sets its branches beside a tall brace, and a branch can carry
+// words — "otherwise", "if x is odd", a type name in a program — enough to read
+// as prose and cut the formula in two. The brace says otherwise: nothing but a
+// formula stands beside one, within its height. A brace is found as the column
+// of delimiter pieces it is built from, and it has to be at least two lines
+// tall and share its height with a line already read as a formula, so that a
+// bracket set large inside a sentence reaches nothing.
+function absorbBraceRows(lines) {
+	const pieces = lines.filter((line) => line.blank || (!line.furniture && DELIMITER_PIECE_RE.test(line.text)));
+	const spans = [];
+	for (const piece of pieces.sort((p, q) => q.rect[3] - p.rect[3])) {
+		const span = spans.find((sp) => sp.col === piece.col && sp.rot === piece.rot
+			&& piece.rect[0] < sp.right + piece.size && piece.rect[2] > sp.left - piece.size
+			&& piece.rect[3] >= sp.bottom - 0.5 * piece.size);
+		if (span) {
+			span.left = Math.min(span.left, piece.rect[0]);
+			span.right = Math.max(span.right, piece.rect[2]);
+			span.bottom = Math.min(span.bottom, piece.rect[1]);
+			span.members.add(piece);
+		} else {
+			spans.push({ col: piece.col, rot: piece.rot, left: piece.rect[0], right: piece.rect[2],
+				bottom: piece.rect[1], top: piece.rect[3], size: piece.size, members: new Set([piece]) });
+		}
+	}
+	for (const span of spans) {
+		if (span.top - span.bottom < 2 * span.size) continue;
+		const beside = lines.filter((line) => !line.furniture && !span.members.has(line)
+			&& line.col === span.col && line.rot === span.rot && !line.tabular
+			&& (line.rect[1] + line.rect[3]) / 2 > span.bottom && (line.rect[1] + line.rect[3]) / 2 < span.top);
+		if (!beside.some((line) => line.kind === "display")) continue;
+		for (const line of beside) line.kind = "display";
+		for (const piece of span.members) if (!piece.furniture) piece.kind = "display";
+	}
+}
+
 function absorbDisplayRows(lines) {
 	let rows = displayRows(lines);
 	if (!rows.length) return;
@@ -876,7 +915,7 @@ function markTableRows(lines, typicalGap) {
 		// A row the layout kept on one line is already known for what it is;
 		// it is looked at here only for cells wrapped onto the lines below it.
 		const oneLine = row.members.length === 1 && row.members[0].tabular && row.members[0].kind === "text"
-			&& cells >= 3;
+			&& cells >= 2;
 		if (!isRow && !oneLine) continue;
 		let rowId = null;
 		const claim = (line) => {
@@ -886,6 +925,35 @@ function markTableRows(lines, typicalGap) {
 		};
 		if (isRow) for (const member of row.members) claim(member);
 		attachWrappedCells(row, lines, alone, typicalGap, claim);
+	}
+}
+
+// Two columns give a row a single wide gap, and on a line of its own one gap is
+// no evidence of anything — it is also the run up to an equation number. A
+// table is what makes it one: the gaps line up, every second cell starting at
+// the same place, row after row. Three lines in a column agreeing on it is a
+// table; a formula's condition or a number at the margin does not repeat so.
+function markAlignedRows(lines) {
+	const candidates = lines.filter((line) => !line.furniture && !line.tabular && line.kind === "text"
+		&& line.cells.length === 2 && line.eqNumFrom < 0 && line.textWords >= 1);
+	const used = new Set();
+	for (const seed of candidates) {
+		if (used.has(seed)) continue;
+		const group = candidates.filter((line) => !used.has(line) && line.col === seed.col && line.rot === seed.rot
+			&& Math.abs(line.cells[1][0] - seed.cells[1][0]) <= seed.size);
+		// Rows follow one another down the page; the same indent a page apart
+		// is a coincidence, not a column.
+		group.sort((p, q) => q.rect[1] - p.rect[1]);
+		let run = [group[0]];
+		const flush = () => {
+			if (run.length >= 3) for (const line of run) { line.tabular = true; used.add(line); }
+		};
+		for (let i = 1; i < group.length; i++) {
+			if (run[run.length - 1].rect[1] - group[i].rect[3] <= 4 * seed.size) run.push(group[i]);
+			else { flush(); run = [group[i]]; }
+		}
+		flush();
+		used.add(seed);
 	}
 }
 
@@ -1387,7 +1455,12 @@ function displayBand(block, lines) {
 		if (middle > top) top = Math.min(top, line.rect[1]);
 		else bottom = Math.max(bottom, line.rect[3]);
 	}
-	return top > bottom ? [bottom, top] : null;
+	// Formula lines hemmed in by pieces of another formula can be clamped down
+	// to nothing — a highlight one hairline tall. Its own glyphs are a better
+	// answer than that.
+	const own = block.rect[3] - block.rect[1];
+	if (top - bottom < 0.6 * own) return [block.rect[1], block.rect[3]];
+	return [bottom, top];
 }
 
 function boundingArea(chars, idx, col, band) {
@@ -1532,7 +1605,9 @@ function analysePage(rawChars, viewBox, opts = {}) {
 	for (const ln of lines) {
 		if (!ln.furniture) ln.kind = classifyLine(ln);
 	}
+	absorbBraceRows(lines);
 	absorbDisplayRows(lines);
+	markAlignedRows(lines);
 	markTableRows(lines, typicalLineGap(lines));   // after absorbing, so a formula's row is already one
 	return { chars, lines, cols, fragments };
 }

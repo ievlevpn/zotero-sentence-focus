@@ -1833,4 +1833,113 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.ok(!lastRow.text.includes("Table 2"), `the caption is not a cell: ${got}`);
 }
 
+// --- a two-column table -----------------------------------------------------
+
+// Two columns give each row one wide gap, which on a single line is also what
+// the run up to an equation number looks like, so one gap alone never made a
+// row. What makes these rows is that the gaps line up: every second cell starts
+// at the same place, row after row.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 10.9;
+	const row = (y, a, b, extra = {}) => ({ pieces: [{ x: 85, text: a }, { x: 304, text: b }], y, size, ...extra });
+	const units = segmentPage(layout([
+		row(742, "Kind", "Meaning", { para: true }),
+		row(722, "uniform", "the default; nobody has supplied this"),
+		row(707, "probs", "a vector of probabilities: an assertion,", { para: true }),
+		{ text: "renormalised, never smoothed", x: 304, y: 692.5, size },
+		row(678, "counts", "a vector of counts: evidence, smoothed", { para: true }),
+		{ text: "toward a prior when used as a row", x: 304, y: 663, size },
+		row(649, "parametric", "a named family with parameters,", { para: true }),
+		{ text: "evaluated on the support", x: 304, y: 634, size },
+		row(619, "inherit", "rows only: defer to the variable’s marginal", { para: true }),
+		{ text: "A spec is specified — the predicate the audit uses — exactly when its kind is set,", x: 85, y: 578, size },
+		{ text: "or parametric. A counts spec may carry two optional fields, both of them numbers.", x: 85, y: 563, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	const meanings = [["uniform", "supplied this"], ["probs", "never smoothed"],
+		["counts", "used as a row"], ["parametric", "on the support"], ["inherit", "marginal"]];
+	for (const [kind, meaning] of meanings) {
+		const unit = units.find((u) => u.text.startsWith(kind));
+		assert.ok(unit && unit.text.includes(meaning), `"${kind}" is one row with its meaning: ${got}`);
+		assert.ok(meanings.every(([k, m]) => k === kind || !unit.text.includes(m)), `and only its own: ${got}`);
+		assert.strictEqual(unit.rects.length, 1, "drawn as one band");
+	}
+	assert.ok(units.some((u) => u.text.startsWith("A spec is specified")), `the prose after it is its own: ${got}`);
+}
+
+// --- a cases formula ---------------------------------------------------------
+
+// The branches of a cases formula stand beside a tall brace, and a branch can
+// carry a word — "otherwise", "kind" — which made it read as a line of prose
+// and cut the formula in two. Whatever stands beside a brace, within its
+// height, is part of the formula it opens.
+{
+	const PAGE = [0, 0, 595, 842];
+	const PX = "TROHAZ+TeXGyrePagellaMath-Regular";
+	const size = 10.9;
+	const units = segmentPage(layout([
+		{ text: "The compilation map sends a spec and a level list to a point of the simplex.", x: 85, y: 480, size },
+		{ text: "It is total: it never raises, and every failure path returns the uniform vector.", x: 85, y: 465, size, para: true },
+		{ text: "«ν»(«w»)~j~ «=»", x: 138, y: 399.5, size, mathFont: PX },
+		{ pieces: [
+			{ text: "⎧", x: 178, dy: 24, raw: true }, { text: "⎪", x: 178, dy: 17, raw: true },
+			{ text: "⎪", x: 178, dy: 10, raw: true },
+		], y: 399.5, size, mathFont: PX },
+		{ pieces: [
+			{ text: "⎨", x: 178, dy: 3, raw: true }, { text: "⎪", x: 178, dy: -4, raw: true },
+			{ text: "⎪", x: 178, dy: -11, raw: true }, { text: "⎩", x: 178, dy: -17, raw: true },
+		], y: 399.5, size, mathFont: PX, para: true },
+		{ text: "«w̃»~j~", x: 194, y: 421, size, mathFont: PX },
+		{ text: "«∑»~l~ «w̃»~l~", x: 186, y: 402, size, mathFont: PX, para: true },
+		{ text: "if «∑»~l~ «w̃»~l~ «>» 0,", x: 225, y: 410, size, mathFont: PX, para: true },
+		{ text: "1/«k» otherwise,", x: 185, y: 383.5, size, mathFont: PX, para: true },
+		{ text: "«w̃»~j~ «=» max(0, «w»~j~ ⋅ 1[«w»~j~ finite]) ∶", x: 310, y: 399.5, size, mathFont: PX, para: true },
+		{ text: "non-finite entries become 0, negative entries are clipped to 0, and a vector that", x: 85, y: 355, size },
+		{ text: "sums to zero yields the uniform vector rather than an error, as promised above.", x: 85, y: 341, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1, `the formula is one unit: ${got}`);
+	assert.ok(displays[0].text.includes("otherwise") && displays[0].text.includes("max(0"),
+		`with every branch and the definition beside it: ${got}`);
+	for (const unit of units) {
+		for (const r of unit.rects) assert.ok(r[3] - r[1] > 5, `no band collapses to a line: ${got}`);
+	}
+}
+
+// ...and branches that read as whole phrases, a type name and a set of them.
+{
+	const PAGE = [0, 0, 595, 842];
+	const PX = "TROHAZ+TeXGyrePagellaMath-Regular";
+	const TT = "MYHUDI+LMMono10-Regular";
+	const size = 10.9;
+	const units = segmentPage(layout([
+		{ text: "zero or less yields the uniform vector rather than an error. Then, ignoring smoothing for", x: 85, y: 341, size },
+		{ text: "the moment,", x: 85, y: 326, size, para: true },
+		{ text: "«σ»(spec, «L») «=»", x: 158, y: 266, size, mathFont: PX, para: true },
+		{ pieces: [
+			{ text: "⎧", x: 224, dy: 34, raw: true }, { text: "⎪", x: 224, dy: 27, raw: true },
+			{ text: "⎪", x: 224, dy: 20, raw: true }, { text: "⎪", x: 224, dy: 13, raw: true },
+			{ text: "⎪", x: 224, dy: 7, raw: true },
+		], y: 266, size, mathFont: PX },
+		{ pieces: [
+			{ text: "⎨", x: 224, dy: 1, raw: true }, { text: "⎪", x: 224, dy: -6, raw: true },
+			{ text: "⎪", x: 224, dy: -13, raw: true }, { text: "⎪", x: 224, dy: -20, raw: true },
+			{ text: "⎩", x: 224, dy: -27, raw: true },
+		], y: 266, size, mathFont: PX, para: true },
+		{ text: "(1/«k», ... , 1/«k») kind «∈» {uniform, inherit},", x: 231, y: 292, size, mathFont: TT },
+		{ text: "«ν»(«π»~k~(«v»)) kind «∈» {probs, counts},", x: 231, y: 273, size, mathFont: TT },
+		{ text: "«ν»(«f»~θ~(«x»)) kind «=» parametric,", x: 231, y: 256, size, mathFont: PX },
+		{ text: "(1/«k», ... , 1/«k») otherwise.", x: 231, y: 239.5, size, mathFont: PX, para: true },
+		{ text: "The padding operator pads with zeros on the right, or truncates on the right, to length", x: 85, y: 210, size },
+		{ text: "exactly k, so a length mismatch degrades rather than fails; the validator reports it.", x: 85, y: 196, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const displays = units.filter((u) => u.kind === "display");
+	assert.strictEqual(displays.length, 1, `the formula is one unit: ${got}`);
+	assert.ok(displays[0].text.includes("uniform, inherit") && displays[0].text.includes("otherwise"),
+		`from the first branch to the last: ${got}`);
+}
+
 console.log("all tests passed");

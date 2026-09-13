@@ -124,6 +124,19 @@ So the band covers everything **standing on the row** — the pieces of a brace
 included, reaching a line further on each pass until nothing more is found —
 and is then clamped so that it never crosses onto a neighbouring line.
 
+**Cases.** The branches of a cases formula stand beside a tall brace, and a
+branch can carry words — *otherwise*, *if x is odd*, a type name — enough to
+read as prose and cut the formula in two. The brace settles it: nothing but a
+formula stands beside one, within its height. A brace is found as the column of
+delimiter pieces it is built from (`⎧ ⎪ ⎨ ⎩`, or pieces that map to nothing),
+and it must be at least two lines tall and share its height with a line already
+read as a formula, so a bracket set large inside a sentence reaches nothing.
+
+Clamping a band against its neighbours can also squeeze it to nothing, when a
+formula's lines are hemmed in by the pieces of another; a band clamped below
+most of its own glyphs' height falls back to their extent instead of being drawn
+as a hairline.
+
 **A glyph's box is not its ink**, and for big delimiters the difference is most
 of the glyph. Zotero's pdf.js fork boxes every glyph from the font's descent to
 its ascent, capped at the font's cap height, with any descent deeper than half
@@ -321,6 +334,11 @@ A row is also a block of its own: a table carries no full stops and often no
 paragraph breaks either, so without that a whole table of figures reads as one
 sentence. And a row is never split into sentences, because the full stops in it
 are not the ends of any.
+
+A **two-column** table gives each row a single wide gap, and one gap on its
+own is no evidence of anything — it is also the run up to an equation number.
+What makes those lines rows is that the gaps line up: three or more lines in a
+column, one under the next, whose second cells all start at the same place.
 
 Rows are counted in **cells**, not pieces. A cell too long for its column wraps,
 and then the row arrives as the wrapped cell standing apart from the rest of
