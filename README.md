@@ -1,6 +1,6 @@
 # Sentence Focus (Zotero plugin)
 
-A reading ruler for Zotero's PDF reader that moves **a sentence at a time**
+A reading ruler for Zotero's reader — PDFs, EPUBs and saved web pages — that moves **a sentence at a time**
 instead of a line at a time. Press `]` to step forward, `[` to step back, or
 click anywhere on the page to put the ruler on the sentence under the pointer.
 It also steps by word, line or paragraph if you would rather.
@@ -32,6 +32,30 @@ For live development, point Zotero at the folder instead of zipping: create a
 file named `sentence-focus@local` (the id from `manifest.json`) inside your
 Zotero profile's `extensions/` directory whose contents are the absolute path
 to this folder, then restart Zotero.
+
+## EPUBs and web snapshots
+
+An EPUB needs none of what follows. Its text is already text: Zotero's EPUB
+view renders each section of the book into the reader's document, and the
+plugin reads it from there a block at a time — a paragraph, a heading, a list
+item, a table cell — collapsing white space the way the page shows it and
+keeping, for every character, the text node and offset it came from. The
+blocks are split into sentences by the same rules as a PDF's text
+(abbreviations, initials, quotations), a heading is read whole, and a formula
+is never split. Words are the block's words; lines are read off the layout, a
+block's words cut where the next one wraps, and are found again when the text
+reflows.
+
+The highlight is the browser's own CSS custom highlight over the unit's range,
+so it follows the text through page turns, scrolling and a change of font size
+without being redrawn, and it paints under the glyphs. Only colour and
+decoration can be styled that way: *tint*, *underline* and *dim rest* look as
+they do on a PDF, and the shaped styles (*rounded*, *soft*, *marker*) come out
+as the tint. Stepping past the end of a section turns to the next, in either
+the paginated or the scrolled layout; the view itself is asked to bring the
+sentence into sight. A saved web page is read the same way, as one section.
+Where the browser has no custom highlights (Zotero 7), boxes are laid over the
+range's lines instead.
 
 ## How it finds sentences
 

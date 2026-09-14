@@ -3462,7 +3462,9 @@ function isTypingTarget(target) {
 function startSession(reader, doc, btn) {
 	const v = viewerOf(reader);
 	if (!v) {
-		Zotero.debug("Sentence Focus: no PDF view in this tab");
+		const dv = domViewOf(reader);
+		if (dv) return startDomSession(reader, doc, btn, dv);
+		Zotero.debug("Sentence Focus: no document view in this tab");
 		return null;
 	}
 	const session = {
@@ -3550,7 +3552,7 @@ function stopSession(reader) {
 	const session = sessions.get(reader);
 	if (!session) return;
 	sessions.delete(reader);
-	try { clearPaint(session); } catch (e) { /* its document is unloading */ }
+	try { session.clear ? session.clear() : clearPaint(session); } catch (e) { /* its document is unloading */ }
 	for (const off of session.handlers) {
 		try { off(); } catch (e) { /* document already gone */ }
 	}
@@ -3569,6 +3571,489 @@ function toggle(reader, doc, btn) {
 	if (sessions.has(reader)) { stopSession(reader); return; }
 	const session = startSession(reader, doc, btn);
 	setButtonState(btn, !!session);
+}
+
+// --- EPUB and web snapshots --------------------------------------------------
+//
+// An EPUB comes as text already: no glyphs to assemble into lines, no columns
+// to find, no formulas to tell from prose. Zotero's EPUB view renders each
+// section of the book into a container of its own inside one document, and
+// the text is read straight from that document, a block at a time — a
+// paragraph, a heading, a list item, a table cell — and split into sentences by
+// the same rules as a PDF's text. A saved web page is the same thing with a
+// single section.
+//
+// The highlight is the browser's own: a CSS custom highlight over the unit's
+// DOM range. It follows the text through reflow, a change of font size, page
+// turns and scrolling without anything being redrawn, and it paints under the
+// glyphs, so the ink always stays on top.
+
+// A block's text, gathered from its text nodes. White space collapses the way
+// the page shows it, and every character of the result remembers the node and
+// offset it came from, so a range of the text is a range of the document.
+// `pieces` are { text, node, math } in document order; a line break is a piece
+// with no node.
+function blockText(pieces) {
+	let text = "";
+	const nodes = [], offsets = [], math = [];
+	for (const piece of pieces) {
+		const s = piece.text;
+		for (let k = 0; k < s.length; k++) {
+			const white = /\s/.test(s[k]);
+			if (white && (!text.length || text[text.length - 1] === " ")) continue;
+			text += white ? " " : s[k];
+			nodes.push(piece.node || null);
+			offsets.push(k);
+			math.push(piece.math ? 1 : 0);
+		}
+	}
+	while (text.endsWith(" ")) {
+		text = text.slice(0, -1);
+		nodes.pop(); offsets.pop(); math.pop();
+	}
+	return { text, nodes, offsets, math };
+}
+
+// The units of one block, as offsets into its text. Lines depend on how the
+// text is laid out and are found in the document instead (see epubLines).
+function textUnits(text, math, granularity) {
+	if (!/\S/.test(text)) return [];
+	if (granularity === "paragraph") return [[0, text.length]];
+	if (granularity === "word") return wordRanges(text);
+	return splitSentences(text, math, []);
+}
+
+// Elements whose text is not read: not shown, or not prose. A formula is read
+// whole, as one piece, however many sentences its glyphs seem to hold.
+const EPUB_SKIP = new Set(["script", "style", "noscript", "template", "rt", "rp", "title"]);
+const EPUB_BLOCKS = new Set(["address", "article", "aside", "blockquote", "body", "replaced-body", "caption",
+	"dd", "div", "dl", "dt", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
+	"header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody", "td", "tfoot", "th",
+	"thead", "tr", "ul"]);
+const EPUB_BLOCK_DISPLAYS = new Set(["block", "list-item", "table-cell", "table", "flex", "grid", "table-caption", "flow-root"]);
+
+function isBlockElement(el, win) {
+	const name = (el.localName || "").toLowerCase();
+	if (EPUB_BLOCKS.has(name)) return true;
+	// A book's own stylesheet can make a span a paragraph; asked only of what is
+	// in the document, since a section not on screen has no computed style.
+	if (!win || !el.isConnected) return false;
+	try {
+		return EPUB_BLOCK_DISPLAYS.has(win.getComputedStyle(el).display);
+	} catch (e) {
+		return false;
+	}
+}
+
+// Every block of a section, in reading order, each as its text and the map
+// back to the document. A block's text runs until another block starts or
+// ends: a paragraph with a list inside it is three blocks — before, the list,
+// after.
+function collectBlocks(root, win) {
+	const blocks = [];
+	let pieces = [];
+	let heading = false;
+	const flush = () => {
+		if (pieces.length) {
+			const b = blockText(pieces);
+			b.heading = heading;
+			if (/\S/.test(b.text)) blocks.push(b);
+		}
+		pieces = [];
+	};
+	const walk = (node, inMath) => {
+		for (let child = node.firstChild; child; child = child.nextSibling) {
+			if (child.nodeType === 3) {
+				if (child.nodeValue) pieces.push({ text: child.nodeValue, node: child, math: inMath });
+				continue;
+			}
+			if (child.nodeType !== 1) continue;
+			const name = (child.localName || "").toLowerCase();
+			if (EPUB_SKIP.has(name)) continue;
+			if (name === "br") { pieces.push({ text: " " }); continue; }
+			const math = inMath || name === "math" || name === "svg" || name.startsWith("mjx-");
+			const block = isBlockElement(child, win);
+			const was = heading;
+			if (block) { flush(); heading = /^h[1-6]$/.test(name); }
+			walk(child, math);
+			if (block) { flush(); heading = was; }
+		}
+	};
+	walk(root, false);
+	flush();
+	return blocks;
+}
+
+// A unit is kept as the nodes and offsets it runs between; its Range is made
+// when it is shown.
+function blockUnits(block, granularity) {
+	// A heading is read whole: "Chapter One. The Beginning" is one title.
+	const g = block.heading && granularity === "sentence" ? "paragraph" : granularity;
+	return textUnits(block.text, block.math, g).map(([a, b]) => ({
+		kind: "text",
+		text: block.text.slice(a, b),
+		startNode: block.nodes[a], startOffset: block.offsets[a],
+		endNode: block.nodes[b - 1], endOffset: block.offsets[b - 1] + 1,
+	})).filter((u) => u.startNode && u.endNode);
+}
+
+// The EPUB or snapshot view of a reader, or null. Asked of the reader's type
+// first: a PDF's view is a document too, before pdf.js has finished loading.
+function domViewOf(reader) {
+	if (!reader || reader.type === "pdf") return null;
+	const view = reader._internalReader && reader._internalReader._primaryView;
+	const win = view && view._iframeWindow;
+	const doc = win && (view._iframeDocument || win.document);
+	if (!doc || !doc.body || win.PDFViewerApplication) return null;
+	return { view, win, doc };
+}
+
+// The roots of a book's sections, in spine order; a snapshot is one section.
+// A section not on screen is still rendered, just not in the document.
+function sectionRoots(dv) {
+	const renderers = dv.view.renderers;
+	if (renderers && renderers.length) return Array.from(renderers, (r) => r.body || r.container);
+	return [dv.doc.body];
+}
+
+function sectionIndexOf(dv, node) {
+	const el = node && (node.nodeType === 1 ? node : node.parentElement);
+	const holder = el && el.closest && el.closest("[data-section-index]");
+	return holder ? Number(holder.getAttribute("data-section-index")) : 0;
+}
+
+function blocksOf(session, section) {
+	let blocks = session.blocks.get(section);
+	if (!blocks) {
+		const dv = domViewOf(session.reader);
+		const root = dv && sectionRoots(dv)[section];
+		blocks = root ? collectBlocks(root, dv.win) : [];
+		session.blocks.set(section, blocks);
+		// A book's text never changes, but a long one has many sections: keep
+		// the ones near where the reader is.
+		while (session.blocks.size > 12) session.blocks.delete(session.blocks.keys().next().value);
+	}
+	return blocks;
+}
+
+function rangeOf(doc, unit) {
+	const range = doc.createRange();
+	range.setStart(unit.startNode, unit.startOffset);
+	range.setEnd(unit.endNode, unit.endOffset);
+	return range;
+}
+
+// Lines are where the layout broke the text, so they are read off the page:
+// a block's words, cut where the next word starts back at the left or below.
+// A section that is not in the document has no layout, and is stepped through
+// a sentence at a time until it is shown.
+function domLines(dv, blocks) {
+	const out = [];
+	for (const block of blocks) {
+		const words = blockUnits(block, "word");
+		let line = null, last = null;
+		for (const word of words) {
+			let rect = null;
+			try { rect = rangeOf(dv.doc, word).getClientRects()[0] || null; } catch (e) { rect = null; }
+			if (!rect) return null;
+			const wraps = last && (rect.left < last.left - 1 || rect.top >= last.bottom - 0.25 * (last.bottom - last.top));
+			if (!line || wraps) {
+				line = { ...word, text: word.text };
+				out.push(line);
+			} else {
+				line.endNode = word.endNode;
+				line.endOffset = word.endOffset;
+				line.text += " " + word.text;
+			}
+			last = rect;
+		}
+	}
+	return out;
+}
+
+function domUnitsAt(session, section) {
+	const g = granularity();
+	const key = `${section}:${g}`;
+	let units = session.units.get(key);
+	if (units) return units;
+	const dv = domViewOf(session.reader);
+	if (!dv) return [];
+	const blocks = blocksOf(session, section);
+	units = g === "line" ? domLines(dv, blocks) : null;
+	if (!units) {
+		units = blocks.flatMap((b) => blockUnits(b, g === "line" ? "sentence" : g));
+		if (g === "line") return units;   // not laid out yet: not worth keeping
+	}
+	session.units.set(key, units);
+	while (session.units.size > 24) session.units.delete(session.units.keys().next().value);
+	return units;
+}
+
+// The highlight's look, as the pseudo-element the browser paints it with. Only
+// colour and decoration can be styled there, so the shaped styles — rounded,
+// soft, marker — come out as the plain tint.
+function highlightCSS() {
+	const style = styleName();
+	const strength = Math.min(0.95, Math.max(0.05, (Number(pref("opacity")) || DEFAULTS.opacity) / 100));
+	const hex = solidColor(String(pref("color"))).slice(1);
+	const [r, g, b] = [0, 2, 4].map((k) => parseInt(hex.slice(k, k + 2), 16));
+	const colour = (a) => `rgb(${r} ${g} ${b} / ${a.toFixed(3)})`;
+	if (style === "underline") {
+		return `::highlight(sfz-unit){text-decoration:underline ${colour(Math.min(0.95, strength * 1.7))};`
+			+ "text-decoration-thickness:.14em;text-underline-offset:.18em}";
+	}
+	if (style === "dim") {
+		return `::highlight(sfz-dim){color:color-mix(in srgb,CanvasText ${Math.round((1 - strength) * 100)}%,Canvas)}`;
+	}
+	return `::highlight(sfz-unit){background-color:${colour(strength)}}`;
+}
+
+function setDomStyle(dv, css) {
+	let el = dv.doc.getElementById("sfz-dom-style");
+	if (!el) {
+		injectStyle(dv.doc, "sfz-dom-style", css);
+		return;
+	}
+	if (el.textContent !== css) el.textContent = css;
+}
+
+// Where the browser has no custom highlights (Zotero 7), boxes over the
+// range's lines, placed in the document and moved along when the text does.
+function paintDomBoxes(session, dv, range) {
+	const layer = dv.doc.createElement("div");
+	layer.className = "sfz-dom-layer";
+	layer.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2147483647";
+	const strength = Math.min(0.95, Math.max(0.05, (Number(pref("opacity")) || DEFAULTS.opacity) / 100));
+	const colour = solidColor(String(pref("color")));
+	const place = () => {
+		layer.replaceChildren();
+		const sx = dv.win.scrollX, sy = dv.win.scrollY;
+		for (const r of range.getClientRects()) {
+			if (!r.width || !r.height) continue;
+			const box = dv.doc.createElement("div");
+			box.style.cssText = `position:absolute;left:${r.left + sx}px;top:${r.top + sy}px;width:${r.width}px;height:${r.height}px;`
+				+ `background:${colour};opacity:${strength};mix-blend-mode:multiply;border-radius:2px`;
+			layer.append(box);
+		}
+	};
+	place();
+	dv.doc.body.append(layer);
+	session.painted.push(layer);
+	// Turning a page moves the text without scrolling anything.
+	const sections = dv.doc.querySelector(".sections") || dv.doc.body;
+	const observer = new dv.win.MutationObserver(place);
+	observer.observe(sections, { attributes: true, attributeFilter: ["style"] });
+	dv.win.addEventListener("resize", place);
+	session.unplace = () => { observer.disconnect(); dv.win.removeEventListener("resize", place); };
+}
+
+function clearDomPaint(session, dv = domViewOf(session.reader)) {
+	if (session.unplace) { try { session.unplace(); } catch (e) { /* gone */ } session.unplace = null; }
+	for (const el of session.painted) { try { el.remove(); } catch (e) { /* gone */ } }
+	session.painted = [];
+	if (!dv) return;
+	try {
+		const registry = dv.win.CSS && dv.win.CSS.highlights;
+		if (registry) { registry.delete("sfz-unit"); registry.delete("sfz-dim"); }
+	} catch (e) { /* document gone */ }
+}
+
+function paintDom(session, scroll) {
+	const dv = domViewOf(session.reader);
+	if (!dv) { stopSession(session.reader); return; }
+	const units = domUnitsAt(session, session.section);
+	const unit = units[session.unitIndex];
+	clearDomPaint(session, dv);
+	if (!unit) return;
+	let range;
+	try { range = rangeOf(dv.doc, unit); } catch (e) { return; }
+	if (scroll) revealDom(dv, range);
+	const registry = dv.win.CSS && dv.win.CSS.highlights;
+	if (!registry || typeof dv.win.Highlight !== "function") {
+		paintDomBoxes(session, dv, range);
+		return;
+	}
+	setDomStyle(dv, highlightCSS());
+	if (styleName() === "dim") {
+		const root = dv.doc.body;
+		const before = dv.doc.createRange(), after = dv.doc.createRange();
+		before.setStart(root, 0);
+		before.setEnd(unit.startNode, unit.startOffset);
+		after.setStart(unit.endNode, unit.endOffset);
+		after.setEnd(root, root.childNodes.length);
+		registry.set("sfz-dim", new dv.win.Highlight(before, after));
+	} else {
+		registry.set("sfz-unit", new dv.win.Highlight(range));
+	}
+}
+
+// The view knows how to bring a range into sight in either of its layouts —
+// turning to the right page, or scrolling — so it is asked to.
+function revealDom(dv, range) {
+	const mode = String(pref("autoScroll"));
+	const flow = dv.view.flow;
+	const section = sectionIndexOf(dv, range.startContainer);
+	const renderer = dv.view.renderers && dv.view.renderers[section];
+	// A section not in the document shows nothing, whatever the setting.
+	const unmounted = renderer && !renderer.mounted;
+	if (mode === "never" && !unmounted) return;
+	try {
+		if (flow && typeof flow.scrollIntoView === "function") {
+			const options = { block: "start", ifNeeded: mode !== "always", skipHistory: true };
+			flow.scrollIntoView(range, Cu ? Cu.cloneInto(options, dv.win) : options);
+			return;
+		}
+		const rect = range.getBoundingClientRect();
+		const height = dv.win.innerHeight;
+		if (mode === "always" || rect.top < 0 || rect.bottom > height) {
+			const margin = Math.min(80, Math.max(0, Number(pref("scrollMargin")) || 0)) / 100 * height;
+			dv.win.scrollBy(0, rect.top - margin);
+		}
+	} catch (e) {
+		Zotero.debug("Sentence Focus: could not scroll to the sentence - " + e);
+	}
+}
+
+async function moveDom(session, delta) {
+	const dv = domViewOf(session.reader);
+	if (!dv) return false;
+	const total = sectionRoots(dv).length;
+	let section = session.section;
+	let units = domUnitsAt(session, section);
+	let i = session.unitIndex + delta;
+	let hops = 0;
+	while ((i < 0 || i >= units.length) && hops++ < 256) {
+		section += delta > 0 ? 1 : -1;
+		if (section < 0 || section >= total) return false;
+		units = domUnitsAt(session, section);
+		i = delta > 0 ? 0 : units.length - 1;
+	}
+	if (!units.length || i < 0 || i >= units.length) return false;
+	session.section = section;
+	session.unitIndex = i;
+	paintDom(session, true);
+	// A section stepped into before it was laid out was read a sentence at a
+	// time; now it is on screen, its lines can be found.
+	if (granularity() === "line" && !session.units.has(`${section}:line`)) {
+		const lines = domUnitsAt(session, section);
+		if (session.units.has(`${section}:line`)) {
+			const unit = units[i];
+			const at = lines.findIndex((l) => l.startNode === unit.startNode && l.startOffset >= unit.startOffset);
+			session.unitIndex = Math.max(0, at);
+			paintDom(session, false);
+		}
+	}
+	return true;
+}
+
+// The first unit that starts at or below the top of what is on screen.
+function focusDomVisible(session) {
+	const dv = domViewOf(session.reader);
+	if (!dv) return;
+	const start = dv.view.flow && dv.view.flow.startRange;
+	let section = start ? sectionIndexOf(dv, start.startContainer) : session.section;
+	if (!Number.isInteger(section) || section < 0) section = 0;
+	let units = domUnitsAt(session, section);
+	// A cover, an image-only title page: start at the next text there is.
+	const total = sectionRoots(dv).length;
+	while (!units.length && section + 1 < total) units = domUnitsAt(session, ++section);
+	let index = 0;
+	for (let k = 0; k < units.length; k++) {
+		let visible;
+		try {
+			if (start) {
+				visible = start.comparePoint(units[k].endNode, units[k].endOffset) >= 0;
+			} else {
+				const rect = rangeOf(dv.doc, units[k]).getBoundingClientRect();
+				visible = rect.bottom > 0;
+			}
+		} catch (e) { visible = false; }
+		if (visible) { index = k; break; }
+	}
+	session.section = section;
+	session.unitIndex = index;
+	paintDom(session, false);
+}
+
+function focusDomAtPoint(session, x, y) {
+	const dv = domViewOf(session.reader);
+	if (!dv || typeof dv.doc.caretPositionFromPoint !== "function") return;
+	const caret = dv.doc.caretPositionFromPoint(x, y);
+	if (!caret || !caret.offsetNode) return;
+	const section = sectionIndexOf(dv, caret.offsetNode);
+	const units = domUnitsAt(session, section);
+	for (let k = 0; k < units.length; k++) {
+		let range;
+		try { range = rangeOf(dv.doc, units[k]); } catch (e) { continue; }
+		if (range.comparePoint(caret.offsetNode, caret.offset) === 0) {
+			session.section = section;
+			session.unitIndex = k;
+			paintDom(session, false);
+			return;
+		}
+	}
+}
+
+function startDomSession(reader, doc, btn, dv) {
+	const session = {
+		kind: "dom", reader, btn,
+		section: 0, unitIndex: 0,
+		blocks: new Map(), units: new Map(),
+		handlers: [], painted: [], inflight: new Map(),
+		queue: Promise.resolve(),
+	};
+	const onKey = (e) => {
+		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+		if (isTypingTarget(e.target)) return;
+		const delta = (e.code === "BracketRight" || e.key === "]") ? 1
+			: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
+		if (!delta) return;
+		e.preventDefault();
+		e.stopPropagation();
+		enqueue(session, async () => {
+			if (await moveDom(session, delta) && delta > 0) countRead(session.reader);
+		});
+	};
+	const onClick = (e) => {
+		if (!pref("followClick") || e.button !== 0) return;
+		if (e.target && e.target.closest && e.target.closest("a[href]")) return;
+		try {
+			const sel = dv.win.getSelection();
+			if (sel && !sel.isCollapsed) return;
+		} catch (err) { /* no selection API here */ }
+		const { clientX, clientY } = e;
+		enqueue(session, () => focusDomAtPoint(session, clientX, clientY));
+	};
+	const docs = [doc, dv.doc].filter((d, i, a) => d && a.indexOf(d) === i);
+	for (const d of docs) {
+		d.addEventListener("keydown", onKey, true);
+		session.handlers.push(() => d.removeEventListener("keydown", onKey, true));
+	}
+	dv.doc.addEventListener("click", onClick, true);
+	session.handlers.push(() => dv.doc.removeEventListener("click", onClick, true));
+	// Lines move when the text reflows: a resize, a change of font size.
+	const dropLines = () => {
+		for (const key of [...session.units.keys()]) if (key.endsWith(":line")) session.units.delete(key);
+	};
+	try {
+		const observer = new dv.win.ResizeObserver(dropLines);
+		observer.observe(dv.doc.body);
+		session.handlers.push(() => observer.disconnect());
+	} catch (e) {
+		dv.win.addEventListener("resize", dropLines);
+		session.handlers.push(() => dv.win.removeEventListener("resize", dropLines));
+	}
+	const onUnload = () => stopSession(reader);
+	for (const d of docs) {
+		const win = d.defaultView;
+		if (!win) continue;
+		win.addEventListener("unload", onUnload, { once: true });
+		session.handlers.push(() => { try { win.removeEventListener("unload", onUnload); } catch (e) { /* gone */ } });
+	}
+	session.clear = () => clearDomPaint(session);
+	sessions.set(reader, session);
+	enqueue(session, () => focusDomVisible(session));
+	return session;
 }
 
 // --- reading counter -------------------------------------------------------
@@ -3812,7 +4297,11 @@ function buildMenu(doc, reader) {
 // several rounds of guessing at a screenshot.
 async function copyDiagnostics(reader, button) {
 	const v = viewerOf(reader);
-	if (!v) return;
+	if (!v) {
+		const dv = domViewOf(reader);
+		if (dv) copyDomDiagnostics(reader, dv, button);
+		return;
+	}
 	const session = sessions.get(reader);
 	const pageIndex = session ? session.pageIndex : Math.max(0, (v.viewer.currentPageNumber || 1) - 1);
 	let report = `Sentence Focus ${version || "?"} — page ${pageIndex + 1}\n`;
@@ -3821,6 +4310,39 @@ async function copyDiagnostics(reader, button) {
 		report += describePage(data.chars, data.viewBox || [0, 0, 612, 792], { mergeDisplay: !!pref("mergeDisplay") });
 	} catch (e) {
 		report += `could not read the page: ${e}`;
+	}
+	let copied = false;
+	try {
+		Zotero.Utilities.Internal.copyTextToClipboard(report);
+		copied = true;
+	} catch (e) {
+		Zotero.debug("Sentence Focus diagnostics:\n" + report);
+	}
+	if (button) {
+		button.textContent = copied ? "Copied to clipboard" : "Written to the debug log";
+		button.disabled = true;
+	}
+}
+
+// The same, for a book: the section's blocks and the units found in them.
+function copyDomDiagnostics(reader, dv, button) {
+	const session = sessions.get(reader);
+	const probe = session && session.kind === "dom" ? session : { reader, blocks: new Map(), units: new Map() };
+	let section = probe.section;
+	if (!Number.isInteger(section)) {
+		const start = dv.view.flow && dv.view.flow.startRange;
+		section = start ? sectionIndexOf(dv, start.startContainer) : 0;
+	}
+	let report = `Sentence Focus ${version || "?"} — ${reader.type || "document"}, section ${section + 1} of ${sectionRoots(dv).length}, by ${granularity()}\n`;
+	try {
+		const blocks = blocksOf(probe, section);
+		report += `blocks ${blocks.length}\n`;
+		for (const block of blocks) {
+			report += `\n¶ ${block.text.slice(0, 200)}\n`;
+			for (const unit of blockUnits(block, granularity() === "line" ? "sentence" : granularity())) report += `  · ${unit.text}\n`;
+		}
+	} catch (e) {
+		report += `could not read the section: ${e}`;
 	}
 	let copied = false;
 	try {
@@ -3852,7 +4374,7 @@ function openMenu(doc, btn, reader) {
 	const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeMenu(); } };
 	// The PDF sits in a nested iframe, so clicks and keys there never reach the
 	// reader document; both have to be listened to for dismissal to work.
-	const v = viewerOf(reader);
+	const v = viewerOf(reader) || domViewOf(reader);
 	const docs = [doc, v && v.doc].filter((d, i, a) => d && a.indexOf(d) === i);
 	for (const d of docs) {
 		d.addEventListener("pointerdown", onDown, true);
@@ -3875,7 +4397,7 @@ function openMenu(doc, btn, reader) {
 // whose view has gone are swept whenever any reader toolbar is built.
 function sweepClosedReaders() {
 	for (const reader of [...sessions.keys()]) {
-		if (!viewerOf(reader)) stopSession(reader);
+		if (!viewerOf(reader) && !domViewOf(reader)) stopSession(reader);
 	}
 }
 
@@ -3935,6 +4457,10 @@ function applyPrefEffect(effect) {
 	// or not a ruler happens to be switched on in that tab at the moment.
 	if (effect === "reanalyse") pageCache.clear();
 	for (const session of sessions.values()) {
+		if (session.kind === "dom") {
+			enqueue(session, () => (effect === "paint" ? paintDom(session, false) : focusDomVisible(session)));
+			continue;
+		}
 		if (effect === "paint") { paint(session, false); continue; }
 		if (effect === "reanalyse") session.inflight.clear();
 		enqueue(session, () => focusPage(session, session.pageIndex, "visible"));
@@ -4006,5 +4532,6 @@ if (typeof module !== "undefined") {
 		solidColor, toPercent, toUserBox, pageAspect, padBoxes, PADDING, mergeTiny, blendFor,
 		pageLuminance, CSS, STYLES,
 		countRead, eraseCount, showCount,
+		blockText, textUnits, collectBlocks, blockUnits, domViewOf,
 	};
 }

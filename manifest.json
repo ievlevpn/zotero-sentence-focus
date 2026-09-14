@@ -1,8 +1,8 @@
 {
 	"manifest_version": 2,
 	"name": "Sentence Focus",
-	"version": "0.25.0",
-	"description": "A reading ruler that highlights whole sentences, not lines. Understands display equations, inline math, abbreviations and hyphenation in academic PDFs.",
+	"version": "0.26.0",
+	"description": "A reading ruler that highlights whole sentences, not lines. Understands display equations, inline math, abbreviations and hyphenation in academic PDFs, and reads EPUBs and web snapshots too.",
 	"homepage_url": "https://github.com/ievlevpn/zotero-sentence-focus",
 	"author": "Pavel Ievlev",
 	"icons": {

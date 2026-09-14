@@ -27,6 +27,7 @@ const {
 	materialize, toPercent, toUserBox, pageAspect, wordRanges, lineRanges,
 	GRANULARITIES, STYLES, CSS, describePage, padBoxes, LIST_LABEL_RE,
 	countRead, eraseCount, showCount,
+	blockText, collectBlocks, blockUnits,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -2798,6 +2799,56 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
 	const rows = units.filter((u) => u.text.includes("Treatment"));
 	assert.ok(rows.length === 4 && rows.every((u) => u.kind === "text" && /\(0\.\d+\)/.test(u.text)), `a named table's formula cells are rows: ${got}`);
+}
+
+// --- EPUB ----------------------------------------------------------------------
+
+// A book's text comes from its document: blocks of text nodes, split into
+// sentences by the same rules, each unit mapped back to the nodes it runs
+// between. A tiny stand-in for the DOM is enough to walk.
+{
+	const el = (name, ...children) => {
+		const node = { nodeType: 1, localName: name, isConnected: false, childNodes: children };
+		children.forEach((c, k) => { c.parentElement = node; c.nextSibling = children[k + 1] || null; });
+		node.firstChild = children[0] || null;
+		return node;
+	};
+	const t = (text) => ({ nodeType: 3, nodeValue: text });
+	const intro = t("It was a bright cold day in April, and the clocks were striking thirteen. Mr. ");
+	const smith = t("Smith slipped   quickly through the glass doors.");
+	const root = el("replaced-body",
+		el("h1", t("Chapter One. The Beginning")),
+		el("p", intro, el("em", smith)),
+		el("ul", el("li", t("First item. And another one.")), el("li", t("Second item"))),
+		el("p", t("Before a break."), el("br"), t("After it"), el("style", t("p{color:red}"))),
+		el("div", t("Loose text "), el("p", t("inside a paragraph.")), t(" and after")),
+	);
+	const blocks = collectBlocks(root, null);
+	assert.deepStrictEqual(blocks.map((b) => b.text), [
+		"Chapter One. The Beginning",
+		"It was a bright cold day in April, and the clocks were striking thirteen. Mr. Smith slipped quickly through the glass doors.",
+		"First item. And another one.",
+		"Second item",
+		"Before a break. After it",
+		"Loose text",
+		"inside a paragraph.",
+		"and after",
+	], "blocks end where elements that are blocks start and end; styles are not read; spaces collapse");
+	assert.deepStrictEqual(blockUnits(blocks[0], "sentence").map((u) => u.text), ["Chapter One. The Beginning"], "a heading is one unit");
+	const units = blockUnits(blocks[1], "sentence");
+	assert.deepStrictEqual(units.map((u) => u.text), [
+		"It was a bright cold day in April, and the clocks were striking thirteen.",
+		"Mr. Smith slipped quickly through the glass doors.",
+	], "an abbreviation does not end a sentence across an element boundary");
+	const second = units[1];
+	assert.strictEqual(second.startNode, intro, "a unit starts in the node its first letter is in");
+	assert.strictEqual(second.startOffset, intro.nodeValue.indexOf("Mr."));
+	assert.strictEqual(second.endNode, smith, "and ends in the node of its last");
+	assert.strictEqual(second.endOffset, smith.nodeValue.length, "just after its last character");
+	assert.deepStrictEqual(blockUnits(blocks[2], "word").map((u) => u.text), ["First", "item.", "And", "another", "one."]);
+	assert.deepStrictEqual(blockUnits(blocks[1], "paragraph").length, 1);
+	const b = blockText([{ text: "  a  b " }, { text: "\n c", node: {} }]);
+	assert.strictEqual(b.text, "a b c", "white space collapses across pieces and is trimmed");
 }
 
 console.log("all tests passed");
