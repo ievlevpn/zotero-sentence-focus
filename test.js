@@ -2851,4 +2851,19 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.strictEqual(b.text, "a b c", "white space collapses across pieces and is trimmed");
 }
 
+// --- stops inside references and asides ----------------------------------------
+
+{
+	const text = "i (1) ‘You are great, Lord, and highly to be praised (Ps. 47: 2): great is your power and your wisdom is immeasurable’ (Ps. 146:5). Man, a little piece of your creation, desires to praise you, a human being ‘bearing his mortality with him’ (2 Cor. 4: 10), carrying with him the witness of his sin and the witness that you ‘resist the proud’ (1 Pet. 5:5). Nevertheless, to praise you is the desire of man.";
+	const got = splitSentences(text, [], []).map(([a, b]) => text.slice(a, b));
+	assert.deepStrictEqual(got.map((t) => t.slice(0, 12)), ["i (1) ‘You a", "Man, a littl", "Nevertheless"],
+		`a stop inside a citation does not end the sentence: ${JSON.stringify(got)}`);
+	const aside = "The bound is sharp. (See Section 8.2 for details.) At fixed ε it improves. Duke Math. J. 55 (1987), 369–384.";
+	const parts = splitSentences(aside, [], []).map(([a, b]) => aside.slice(a, b));
+	assert.deepStrictEqual(parts, ["The bound is sharp.", "(See Section 8.2 for details.)", "At fixed ε it improves.", "Duke Math. J. 55 (1987), 369–384."],
+		`an aside ends where its bracket closes; a journal and its volume stay together: ${JSON.stringify(parts)}`);
+	const ref = "Responses are smaller. Fig. 7 shows the deviations.";
+	assert.strictEqual(splitSentences(ref, [], []).length, 2, "a sentence may still open with Fig. 7");
+}
+
 console.log("all tests passed");

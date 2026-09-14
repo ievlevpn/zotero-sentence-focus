@@ -97,6 +97,10 @@ jan feb mar apr jun jul aug sept sep oct nov dec
 mon tue tues wed thu thurs fri sat sun
 `.trim().split(/\s+/));
 
+// Abbreviations a sentence can open with, pointing at a numbered thing.
+const REFERENCE_WORDS = new Set(["fig", "figs", "eq", "eqs", "eqn", "sec", "secs", "ch", "chap", "thm", "lem", "cor",
+	"prop", "tab", "tbl", "alg", "app", "def", "defn", "rem", "ex", "no", "nos", "vol", "p", "pp", "art", "ref", "refs"]);
+
 // These do end sentences, but only when something sentence-shaped follows.
 const ABBREV_MAYBE = new Set(["etc", "al", "ff", "seq", "et"]);
 
@@ -2282,6 +2286,31 @@ function prevToken(text, i) {
 	return out;
 }
 
+// Whether position `i` sits inside a bracket that opened shortly before it
+// and closes shortly after, with nothing but the bracket's own text between.
+function insideBrackets(text, i) {
+	const pairs = { "(": ")", "[": "]" };
+	let open = null;
+	for (let k = i - 1, depth = 0; k >= 0 && i - k <= 80; k--) {
+		const c = text[k];
+		if (c === ")" || c === "]") depth++;
+		else if (c === "(" || c === "[") {
+			if (depth === 0) { open = c; break; }
+			depth--;
+		}
+	}
+	if (!open) return false;
+	for (let k = i + 1, depth = 0; k < text.length && k - i <= 40; k++) {
+		const c = text[k];
+		if (c === "(" || c === "[") depth++;
+		else if (c === ")" || c === "]") {
+			if (depth === 0) return c === pairs[open];
+			depth--;
+		}
+	}
+	return false;
+}
+
 // Decide whether the terminator at `i` (whose closing quotes and brackets run
 // to `end`) really ends a sentence. Everything here is a reason to say no; the
 // last few lines are the only ways to say yes.
@@ -2317,10 +2346,24 @@ function isBoundary(text, i, end, math, lineStarts) {
 		if (!atEnd && !/\p{Lu}/u.test(next)) return false;
 	}
 
+	// Inside brackets that close soon after: "(1 Pet. 5:5)", "[see Ch. 3.
+	// Also p. 9]" — a citation or an aside, not the end of the sentence
+	// around it.
+	// (An aside that is a sentence of its own, "(See Section 8.2.)", closes
+	// its bracket straight after the stop, and ends there.)
+	if (insideBrackets(text, i) && !/[)\]]/.test(text.slice(i + 1, end))) return false;
+
 	if (ch === ".") {
 		const tok = prevToken(text, i);
 		const low = tok.toLowerCase();
 		if (ABBREV_NEVER.has(low)) return false;
+		// A short capitalised abbreviation before a number is a reference —
+		// "Ps. 146:5", "Gen. 1", "Art. 12" — not a sentence and a figure.
+		if (/^\p{Lu}\p{Ll}{0,3}$/u.test(tok) && /^\d/.test(next)) return false;
+		// ...and so is a stop before such a one: "Duke Math. J. 55" — unless
+		// it is a cross-reference opening the next sentence, "Fig. 7 shows".
+		const ahead = /^\s*(\p{Lu}\p{Ll}{0,3})\.\s*\d/u.exec(text.slice(end));
+		if (ahead && !REFERENCE_WORDS.has(ahead[1].toLowerCase())) return false;
 		if (ABBREV_MAYBE.has(low) && !atEnd && !OPENER_RE.test(next)) return false;
 
 		// Author initials: "J. R. R. Tolkien". A single capital is an initial
