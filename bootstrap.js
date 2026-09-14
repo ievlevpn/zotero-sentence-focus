@@ -671,64 +671,109 @@ function hasMathBefore(chars, line, close) {
 // because "is this line indented?" only means anything within its own column.
 function detectColumns(lines, viewBox) {
 	const x0 = viewBox[0], x1 = viewBox[2];
-	const span = x1 - x0;
-	const full = () => tighten([{ left: x0, right: x1 }], lines) || [{ left: x0, right: x1 }];
-	if (span <= 0 || lines.length < 6) return full();
-
+	const whole = (ls) => ({ left: x0, right: x1, top: Infinity, bottom: -Infinity, lines: ls });
 	// Text set at another angle keeps its own company: a stamp printed down the
 	// margin is eighteen points wide and most of the page tall, and reading it
 	// as part of the text would drag the measure out to the paper's edge.
-	lines = lines.filter((ln) => !ln.rot);
-	if (lines.length < 6) return full();
+	const text = lines.filter((ln) => !ln.rot);
+	if (x1 - x0 <= 0 || text.length < 6) return finishRegions([whole(text.length ? text : lines)]);
+	return finishRegions(cutRegions(text, x1 - x0, 0));
+}
 
-	const BINS = 100;
+// Columns come in regions. A two-column paper sets a table or a figure across
+// both columns, a title and an abstract above them — and a gutter that must run
+// the height of the page is broken by every one of those. So the page is cut
+// as a layout is built: down a gutter where there is one, and otherwise across
+// a band of white space, but only where cutting across lets a gutter be found
+// on one side of it. A page in one column is never cut at all, and comes back
+// as the one region it always was.
+//
+// A gutter separates two bodies of text. The channel between a table's columns
+// is white too, but what stands either side of it is not text: short pieces,
+// not lines running most of their side's width.
+function cutRegions(ls, pageWidth, depth) {
+	const region = () => [{ left: -Infinity, right: Infinity, top: -Infinity, bottom: Infinity, lines: ls }];
+	if (depth > 5 || ls.length < 6) return region();
+	const v = verticalGutter(ls, pageWidth);
+	if (v !== null) {
+		const left = ls.filter((l) => centerX(l) < v), right = ls.filter((l) => centerX(l) >= v);
+		return [...cutRegions(left, pageWidth, depth + 1), ...cutRegions(right, pageWidth, depth + 1)];
+	}
+	for (const y of horizontalGaps(ls).slice(0, 3)) {
+		const top = ls.filter((l) => (l.rect[1] + l.rect[3]) / 2 > y), bottom = ls.filter((l) => (l.rect[1] + l.rect[3]) / 2 <= y);
+		if (!top.length || !bottom.length) continue;
+		const upper = cutRegions(top, pageWidth, depth + 1), lower = cutRegions(bottom, pageWidth, depth + 1);
+		if (upper.length > 1 || lower.length > 1) return [...upper, ...lower];
+	}
+	return region();
+}
+
+function verticalGutter(ls, pageWidth) {
+	const left = Math.min(...ls.map((l) => l.rect[0])), right = Math.max(...ls.map((l) => l.rect[2]));
+	const width = right - left;
+	if (width < 0.4 * pageWidth) return null;
+	// One bin a point: a gutter between two columns can be as narrow as
+	// seventeen points, and coarser bins lose it to rounding at both edges.
+	const BINS = Math.max(1, Math.ceil(width));
 	const cov = new Uint8Array(BINS);
-	for (const ln of lines) {
-		const a = Math.max(0, Math.floor((ln.rect[0] - x0) / span * BINS));
-		const b = Math.min(BINS - 1, Math.ceil((ln.rect[2] - x0) / span * BINS));
+	for (const ln of ls) {
+		const a = Math.max(0, Math.floor(ln.rect[0] - left));
+		const b = Math.min(BINS - 1, Math.ceil(ln.rect[2] - left));
 		for (let i = a; i <= b; i++) cov[i] = 1;
 	}
-	// Only gaps in the middle of the page are gutters; the rest are margins.
-	const cuts = [];
-	let runStart = -1;
-	for (let i = 15; i <= 85; i++) {
+	// Only gaps in the middle are gutters; the rest are margins.
+	let best = null, runStart = -1;
+	const from = Math.floor(0.15 * BINS), to = Math.ceil(0.85 * BINS);
+	for (let i = from; i <= to; i++) {
 		if (!cov[i] && runStart < 0) runStart = i;
-		if (cov[i] || i === 85) {
-			if (runStart >= 0 && i - runStart >= 4) cuts.push((runStart + i) / 2);
+		if (cov[i] || i === to) {
+			if (runStart >= 0 && (!best || i - runStart > best.w)) best = { at: (runStart + i) / 2, w: i - runStart };
 			runStart = -1;
 		}
 	}
-	if (!cuts.length || cuts.length > 2) return full();
-
-	const edges = [x0, ...cuts.map((c) => x0 + c / BINS * span), x1];
-	const cols = [];
-	for (let i = 0; i < edges.length - 1; i++) cols.push({ left: edges[i], right: edges[i + 1] });
-	// A gutter separates two bodies of text, and runs the height of the page to
-	// do it. One wide gap does not: the blank run before an equation number
-	// leaves a "column" holding that number and nothing else, and the channel
-	// between a table's last two columns leaves one holding only that table.
-	// Every margin on the page would then be measured against it.
-	const minLines = Math.max(3, Math.ceil(lines.length * 0.15));
-	const pageSpan = Math.max(...lines.map((l) => l.rect[3])) - Math.min(...lines.map((l) => l.rect[1])) || 1;
-	for (const col of cols) {
-		const held = lines.filter((ln) => centerX(ln) >= col.left && centerX(ln) < col.right);
-		if (held.length < minLines) return full();
-		const span = Math.max(...held.map((l) => l.rect[3])) - Math.min(...held.map((l) => l.rect[1]));
-		if (span < 0.5 * pageSpan) return full();
+	if (!best || best.w < 8) return null;
+	const x = left + best.at;
+	const top = Math.max(...ls.map((l) => l.rect[3])), bottom = Math.min(...ls.map((l) => l.rect[1]));
+	const minLines = Math.max(3, Math.ceil(ls.length * 0.15));
+	for (const side of [ls.filter((l) => centerX(l) < x), ls.filter((l) => centerX(l) >= x)]) {
+		if (side.length < minLines) return null;
+		const span = Math.max(...side.map((l) => l.rect[3])) - Math.min(...side.map((l) => l.rect[1]));
+		if (span < 0.5 * (top - bottom)) return null;
+		const sideWidth = Math.max(...side.map((l) => l.rect[2])) - Math.min(...side.map((l) => l.rect[0])) || 1;
+		// Enough of it runs its width: a column can hold a table of its own,
+		// but half of a table split down its middle holds almost no long line.
+		const long = side.filter((l) => l.rect[2] - l.rect[0] >= 0.6 * sideWidth).length;
+		if (long < Math.max(3, 0.25 * side.length)) return null;
 	}
-	return tighten(cols, lines) || full();
+	return x;
 }
 
-// Shrink each column onto the text it actually holds. A column that still
-// reaches the paper's edge makes every line look indented from its left margin
-// and every full-width line look centred in it, and puts the right-hand margin
-// — where equation numbers live — somewhere out in the blank paper.
-function tighten(cols, lines) {
-	for (const col of cols) {
-		const own = lines.filter((ln) => centerX(ln) >= col.left && centerX(ln) < col.right);
-		if (!own.length) return null;
-		col.left = Math.min(...own.map((l) => l.rect[0]));
-		col.right = Math.max(...own.map((l) => l.rect[2]));
+// Bands of white space running the full width, widest first.
+function horizontalGaps(ls) {
+	const sorted = [...ls].sort((a, b) => b.rect[3] - a.rect[3]);
+	const heights = median(ls.map((l) => l.rect[3] - l.rect[1])) || 10;
+	const gaps = [];
+	let floor = sorted[0].rect[1];
+	for (let i = 1; i < sorted.length; i++) {
+		const l = sorted[i];
+		if (l.rect[3] < floor - 0.8 * heights) gaps.push({ y: (floor + l.rect[3]) / 2, size: floor - l.rect[3] });
+		floor = Math.min(floor, l.rect[1]);
+	}
+	return gaps.sort((a, b) => b.size - a.size).map((g) => g.y);
+}
+
+// Each region measured to the text it holds: its box, and nothing it does not.
+function finishRegions(regions) {
+	const cols = [];
+	for (const r of regions) {
+		if (!r.lines.length) continue;
+		cols.push({
+			left: Math.min(...r.lines.map((l) => l.rect[0])),
+			right: Math.max(...r.lines.map((l) => l.rect[2])),
+			bottom: Math.min(...r.lines.map((l) => l.rect[1])),
+			top: Math.max(...r.lines.map((l) => l.rect[3])),
+			members: new Set(r.lines),
+		});
 	}
 	return cols;
 }
@@ -746,8 +791,16 @@ function isCentred(line) {
 
 function assignColumns(lines, cols) {
 	for (const ln of lines) {
-		ln.col = cols.find((c) => centerX(ln) >= c.left && centerX(ln) <= c.right) || cols[0];
+		// A line the cutting placed; otherwise — text at another angle, or a
+		// page too short to cut — the region that holds its middle, or the first.
+		ln.col = cols.find((c) => c.members.has(ln))
+			|| cols.find((c) => centerX(ln) >= c.left && centerX(ln) <= c.right
+				&& (ln.rect[1] + ln.rect[3]) / 2 >= c.bottom && (ln.rect[1] + ln.rect[3]) / 2 <= c.top)
+			|| cols[0];
 	}
+	// The line sets are only needed to place lines; keeping them would hold every
+	// line of the page for as long as its columns are referenced.
+	for (const c of cols) delete c.members;
 }
 
 // Running heads, page numbers and footers: near a margin, short, no bigger
@@ -2241,7 +2294,7 @@ function describePage(rawChars, viewBox, opts = {}) {
 	const out = [
 		`viewBox ${viewBox.map((n) => Math.round(n)).join(" ")}   mergeDisplay ${!!opts.mergeDisplay}`,
 		`fragments ${fragments} -> lines ${lines.length}`,
-		`columns ${cols.map((c) => `${Math.round(c.left)}..${Math.round(c.right)}`).join("   ") || "(none)"}`,
+		`columns ${cols.map((c) => `${Math.round(c.left)}..${Math.round(c.right)}` + (cols.length > 1 ? ` y ${Math.round(c.bottom)}..${Math.round(c.top)}` : "")).join("   ") || "(none)"}`,
 		"",
 		"--- lines ---",
 	];
@@ -2327,13 +2380,18 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 			const wholeArea = oneThing && g !== "word" && g !== "line";
 			for (const [a, b] of ranges[g]()) {
 				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea, measure, band);
-				if (unit) out[g].push(unit);
+				if (!unit) continue;
+				// Reading order is by region, and regions can share an x range — the
+				// left column above a figure and the left column below it.
+				const region = cols.indexOf(block.lines[0] && block.lines[0].col);
+				if (region >= 0) unit.col = region;
+				out[g].push(unit);
 			}
 		}
 	}
 	// Reading order: down a column, then on to the next one.
 	for (const g of wanted) {
-		for (const u of out[g]) u.col = colIndexFor(u.left, cols);
+		for (const u of out[g]) if (u.col === undefined) u.col = colIndexFor(u.left, cols);
 		out[g].sort((u, v) => (u.col - v.col) || (v.top - u.top));
 	}
 	return out;
