@@ -2532,4 +2532,50 @@ function fromReport(rows, opts = {}) {
 	assert.strictEqual(kindOf("(ii) We have"), "text", `and its sibling: ${got}`);
 }
 
+// --- what a formula detector found the rules getting wrong --------------------------
+
+// Run against a neural formula detector on the corpus, the flow model was wrong
+// in a handful of recurring ways. One page each.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const P = (text, y, extra = {}) => ({ text, x: 72, y, size: 10, ...extra });
+	const units = segmentPage(layout([
+		P("The fundamental solution satisfies the heat equation on the whole torus and therefore", 700),
+		P("the estimates of the previous section apply to it verbatim, with the same constants too.", 688, { para: true }),
+		// a paragraph's first line at an indent no full line has shown yet, before a display
+		{ text: "For «s» «∈» [0, 1], we define the subspace «H»~«s»~ of «H» by", x: 89, y: 668, size: 10, mathFont: CM, para: true },
+		{ text: "«H»~«s»~ «=» span{«q» «≤» «s»}", x: 230, y: 648, size: 10, mathFont: CM, para: true },
+		// "define" set with a ligature: still a word
+		P("and for every such «s» we {fi}nally de{fi}ne the operator as the restriction of the whole one.", 628, { mathFont: CM, para: true }),
+		// items of nothing but formula, their labels right-aligned
+		{ text: "(I) ‖«A»~«t»~ «−» «A»~«s»~‖ «≤» «K»~1~|«t» «−» «s»|,", x: 97, y: 608, size: 10, mathFont: CM, para: true },
+		{ text: "(II) ‖«E»(«A»~«t»~ «−» «A»~«s»~)‖ «≤» «K»~2~|«t» «−» «s»|,", x: 93, y: 592, size: 10, mathFont: CM, para: true },
+		{ text: "(III) ‖«A»~«t»~‖ «≤» «K»~3~|«t» «−» «s»|.", x: 90, y: 576, size: 10, mathFont: CM, para: true },
+		P("where the constants depend on nothing but the dimension and the exponents given above.", 556, { para: true }),
+		// a named equation tag, at the left margin
+		{ pieces: [{ text: "(PE)", x: 72 }, { text: "«u»~«t»~ «+» «F»(«t», «x», «u», «Du») «=» 0", x: 160 }], y: 536, size: 10, mathFont: CM, para: true },
+		P("which is the parabolic equation we study in what remains of this section of the paper.", 516, { para: true }),
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text.slice(0, 40)]));
+	const kindOf = (has) => { const u = units.find((unit) => unit.text.includes(has)); return u && u.kind; };
+	assert.strictEqual(kindOf("we define the subspace"), "text", `an indented first line: ${got}`);
+	assert.strictEqual(kindOf("span"), "display", `and the display under it: ${got}`);
+	assert.strictEqual(kindOf("(II)"), "text", `a list of formulas with right-aligned labels: ${got}`);
+	assert.ok(units.some((u) => u.kind === "display" && u.text.includes("F(t, x, u, Du) = 0") && !u.text.includes("(PE)")),
+		`a named tag is dropped: ${got}`);
+}
+
+// A bibliography keyed by names and years reads an entry at a time; a citation
+// opening a line of prose, or a formula opening with a bracket, is not a key.
+assert.deepStrictEqual(texts([
+	{ text: "[IS01] P. Imkeller and B. Schmalfuss. The conjugacy of stochastic and random equations.", x: 72, y: 700, para: true },
+	{ text: "[Lê20] K. Lê. A stochastic sewing lemma and applications. Electron. J. Probab. 25, (2020).", x: 72, y: 686, para: true },
+]), [
+	"[IS01] P. Imkeller and B. Schmalfuss. The conjugacy of stochastic and random equations.",
+	"[Lê20] K. Lê. A stochastic sewing lemma and applications. Electron. J. Probab. 25, (2020).",
+]);
+assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sharp.", para: true }]),
+	["[GG24] for a general criterion.", "It is sharp."]);
+
 console.log("all tests passed");

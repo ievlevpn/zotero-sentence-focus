@@ -18,10 +18,12 @@ const MODELS = [
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : null; };
 const pagesSpec = opt("--pages");
+const onlyModels = opt("--models");
 const overlayDir = opt("--overlay");
 const files = args;
 if (overlayDir) { mkdirSync(overlayDir, { recursive: true }); for (const f of readdirSync(overlayDir)) if (f.endsWith(".png")) unlinkSync(`${overlayDir}/${f}`); }
 
+if (onlyModels) MODELS.splice(0, MODELS.length, ...MODELS.filter((m) => onlyModels.split(",").includes(m.key)));
 for (const m of MODELS) m.session = await ort.InferenceSession.create(m.file, { intraOpNumThreads: 4 });
 
 // One render per page, at the resolution the largest model wants.
@@ -156,7 +158,7 @@ for (const file of files) {
 				else if (rules) s.onlyRules++;
 				else if (model) s.onlyModel++;
 				else s.neither++;
-				if (model !== rules) disagreements.push({ model: m.key, page: `${basename(file)}#${p}`, rules: line.kind, text: line.text.slice(0, 60) });
+				if (model !== rules) disagreements.push({ model: m.key, page: `${basename(file)}#${p}`, rules: line.kind, text: line.text.slice(0, 80), x: Math.round(line.rect[0]), y: Math.round(line.rect[1]) });
 			}
 		}
 		if (overlayDir) {

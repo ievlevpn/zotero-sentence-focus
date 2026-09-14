@@ -1,33 +1,220 @@
 {
-  "_note": "Checked by check-corpus.mjs against local copies of the papers (tools/pdfs, not committed). Each entry: a unit whose text contains `has` must be of `kind`; `lacks` must not appear in it; `alone` means no other unit contains `has`.",
-  "cil-users-guide.pdf": {
-    "6":  [{ "has": "which is the nonparametric formulation", "kind": "text" },
-           { "has": "∂x21", "kind": "display", "lacks": "which is" },
-           { "has": "A(p) =", "kind": "display" }],
-    "7":  [{ "has": "α inβf[", "kind": "display" },
-           { "has": "corresponds to max", "kind": "text" },
-           { "has": "are degenerate elliptic.", "kind": "text" }],
-    "8":  [{ "has": "+∞ otherwise;", "kind": "display" },
-           { "has": "−∞ otherwise,", "kind": "display" },
-           { "has": "ut + F (t, x, u, Du, D2u) = 0", "kind": "display", "lacks": "(1.15)" }],
-    "13": [{ "has": "convex hull", "kind": "display" },
-           { "has": "0 ≤ 〈p, q〉 for q", "kind": "display", "lacks": "(2.10)" },
-           { "has": "where x ̃ = (x1", "kind": "text" }],
-    "14": [{ "has": "if and only if either p = Dφ", "kind": "display", "lacks": "(2.1" },
-           { "has": "Then", "kind": "text" }],
-    "17": [{ "has": "where A = D2φ(xˆ) ∈ S(N )", "kind": "text" },
-           { "has": "X1 . . . 0", "kind": "display", "lacks": "where" }],
-    "18": [{ "has": "γ(r − s) ≤ F (x,r,p,X)", "kind": "display", "lacks": "(3.13)" },
-           { "has": "Then u ≤ v in Ω.", "kind": "text" }],
-    "10": [{ "has": "F (x, u(x), p, X) ≤ 0 for all x ∈ O", "kind": "display", "lacks": "(2.4)" }]
-  },
-  "2412.01645v2.pdf": {
-    "2":  [{ "has": "σ(Xs) dBs", "kind": "display" }],
-    "35": [{ "has": "‖Ξ(1),s,x − Ξ(1),s,y ‖D2H−W ([s,1]) = J0,x", "kind": "display", "lacks": "Then, by the fundamental" }],
-    "54": [{ "has": "(iii) With probability one", "kind": "text" }]
-  },
-  "2409.11130v1.pdf": {
-    "48": [{ "has": "dydr +", "kind": "display" },
-           { "has": "( [0, 1] × T , L p).", "kind": "text" }]
-  }
+ "_note": "Checked by check-corpus.mjs against local copies of the papers (tools/pdfs, not committed). Each entry: a unit whose text contains `has` must be of `kind`; `lacks` must not appear in it; `alone` means no other unit contains `has`.",
+ "cil-users-guide.pdf": {
+  "6": [
+   {
+    "has": "which is the nonparametric formulation",
+    "kind": "text"
+   },
+   {
+    "has": "∂x21",
+    "kind": "display",
+    "lacks": "which is"
+   },
+   {
+    "has": "A(p) =",
+    "kind": "display"
+   }
+  ],
+  "7": [
+   {
+    "has": "α inβf[",
+    "kind": "display"
+   },
+   {
+    "has": "corresponds to max",
+    "kind": "text"
+   },
+   {
+    "has": "are degenerate elliptic.",
+    "kind": "text"
+   }
+  ],
+  "8": [
+   {
+    "has": "+∞ otherwise;",
+    "kind": "display"
+   },
+   {
+    "has": "−∞ otherwise,",
+    "kind": "display"
+   },
+   {
+    "has": "ut + F (t, x, u, Du, D2u) = 0",
+    "kind": "display",
+    "lacks": "(1.15)"
+   }
+  ],
+  "13": [
+   {
+    "has": "convex hull",
+    "kind": "display"
+   },
+   {
+    "has": "0 ≤ 〈p, q〉 for q",
+    "kind": "display",
+    "lacks": "(2.10)"
+   },
+   {
+    "has": "where x ̃ = (x1",
+    "kind": "text"
+   }
+  ],
+  "14": [
+   {
+    "has": "if and only if either p = Dφ",
+    "kind": "display",
+    "lacks": "(2.1"
+   },
+   {
+    "has": "Then",
+    "kind": "text"
+   }
+  ],
+  "17": [
+   {
+    "has": "where A = D2φ(xˆ) ∈ S(N )",
+    "kind": "text"
+   },
+   {
+    "has": "X1 . . . 0",
+    "kind": "display",
+    "lacks": "where"
+   }
+  ],
+  "18": [
+   {
+    "has": "γ(r − s) ≤ F (x,r,p,X)",
+    "kind": "display",
+    "lacks": "(3.13)"
+   },
+   {
+    "has": "Then u ≤ v in Ω.",
+    "kind": "text"
+   }
+  ],
+  "10": [
+   {
+    "has": "F (x, u(x), p, X) ≤ 0 for all x ∈ O",
+    "kind": "display",
+    "lacks": "(2.4)"
+   },
+   {
+    "has": "USC(O) = { upper semicontinuous functions",
+    "kind": "display"
+   }
+  ],
+  "16": [
+   {
+    "has": "(i) limα→∞ α|xα − yα|2 = 0 and",
+    "kind": "display"
+   }
+  ],
+  "49": [
+   {
+    "has": "ut + F (t, x, u, Du, D2u) = 0",
+    "kind": "display",
+    "lacks": "(PE)"
+   }
+  ],
+  "50": [
+   {
+    "has": "(BC) u(t, x) = 0",
+    "kind": "display"
+   }
+  ]
+ },
+ "2412.01645v2.pdf": {
+  "2": [
+   {
+    "has": "σ(Xs) dBs",
+    "kind": "display"
+   }
+  ],
+  "35": [
+   {
+    "has": "‖Ξ(1),s,x − Ξ(1),s,y ‖D2H−W ([s,1]) = J0,x",
+    "kind": "display",
+    "lacks": "Then, by the fundamental"
+   }
+  ],
+  "54": [
+   {
+    "has": "(iii) With probability one",
+    "kind": "text"
+   }
+  ],
+  "11": [
+   {
+    "has": "We denote bySthe collection of real random variables given by",
+    "kind": "text",
+    "lacks": "S= {"
+   },
+   {
+    "has": "(I) ‖At −As − As,t ‖Lp",
+    "kind": "text"
+   }
+  ],
+  "14": [
+   {
+    "has": "For s ∈ [0, 1], we define the subspace",
+    "kind": "text",
+    "lacks": "span"
+   }
+  ],
+  "18": [
+   {
+    "has": "(i) For all (s, t)",
+    "kind": "text",
+    "lacks": "(ii)"
+   },
+   {
+    "has": "In particular, (s, 1] ∋ t → K (t, s) is decreasing.",
+    "kind": "text"
+   }
+  ],
+  "32": [
+   {
+    "has": "Ψi finishes the proof.",
+    "kind": "text"
+   }
+  ],
+  "65": [
+   {
+    "has": "[ART23] L. Anzeletti, A. Richard, and E. Tanre",
+    "kind": "text"
+   }
+  ]
+ },
+ "2409.11130v1.pdf": {
+  "48": [
+   {
+    "has": "dydr +",
+    "kind": "display"
+   },
+   {
+    "has": "( [0, 1] × T , L p).",
+    "kind": "text"
+   }
+  ],
+  "16": [
+   {
+    "has": "Step 1: We show that the statement holds for n = 0.",
+    "kind": "text"
+   }
+  ],
+  "59": [
+   {
+    "has": "[IS01] P. Imkeller and B. Schmalfuss. The conjugacy",
+    "kind": "text"
+   }
+  ],
+  "45": [
+   {
+    "has": "Since p ≥ 2 was arbitrary",
+    "kind": "text",
+    "lacks": "[Du]"
+   }
+  ]
+ }
 }

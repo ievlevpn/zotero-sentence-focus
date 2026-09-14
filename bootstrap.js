@@ -407,7 +407,7 @@ function makeLine(chars, from, to) {
 	let runIsMath = true;
 	const closeRun = (end) => {
 		if (runStart < 0) return;
-		const length = end - runStart;
+		const length = runText.length;
 		const mark = () => { for (let k = runStart; k < end; k++) formulaish[k - from] = true; };
 		// One letter between non-letters is a variable; prose italicises whole
 		// words. An operator name — min, max, log, det — is set in roman inside
@@ -428,6 +428,15 @@ function makeLine(chars, from, to) {
 		// A ligature carries several characters in one glyph and is a word, so
 		// length is what tells a variable from "ffi".
 		const isLetter = !!ch && !script && ch.c.length === 1 && /\p{L}/u.test(ch.c);
+		// A ligature inside a run of letters — the "fi" of "define" — is part of
+		// that word; ending the run there left "de" and "ne", no word at all.
+		const ligature = !!ch && !script && runStart >= 0 && ch.c.length > 1 && /^\p{L}+$/u.test(ch.c);
+		if (ligature) {
+			runText += ch.c;
+			runIsMath = runIsMath && ch.math;
+			if (ch.space) closeRun(i + 1);
+			continue;
+		}
 		if (isLetter) {
 			if (runStart < 0) { runStart = i; runText = ""; runIsMath = true; }
 			runText += ch.c;
@@ -507,8 +516,23 @@ function makeLine(chars, from, to) {
 		}
 	}
 
+	// Where a list item's text starts, after its label. Labels are set
+	// right-aligned — "(i)" narrower than "(iii)" — so sibling items line up
+	// there rather than at their left edges.
+	let itemStart = null;
+	const label = LIST_LABEL_RE.exec(text);
+	if (label) {
+		const labelGlyphs = label[0].slice(0, -1).replace(/\s/g, "").length;
+		let seen = 0;
+		for (let i = from; i <= to; i++) {
+			if (/\s/.test(chars[i].c)) continue;
+			if (seen === labelGlyphs) { itemStart = chars[i].rect[0]; break; }
+			seen += chars[i].c.length;
+		}
+	}
+
 	const line = {
-		from, to, text, rect, size, baseline, wideGaps, cells, hangTop, hangingOpeners,
+		from, to, text, rect, size, baseline, wideGaps, cells, hangTop, hangingOpeners, itemStart,
 		standingBaseline: standing.length ? median(standing) : null,
 		standingGlyphs: standing.length,
 		tabular: wideGaps >= 2 || leader || pageNumber,
@@ -576,7 +600,9 @@ function markEquationNumber(chars, line) {
 		// A raised number ends where the formula below it begins, with no space
 		// between them; the step down in baseline is the break instead.
 		const stepsDown = labelBases.length > 0 && median(labelBases) - next.baseline >= 0.5 * line.size;
-		if (EQ_LABEL_RE.test(head.trim()) && (gap >= 0.3 * line.size || stepsDown)) {
+		// On the left, an equation's number is bracketed in parentheses and has
+		// a digit in it; "[IS01]" opening a bibliography entry is a key.
+		if (EQ_LABEL_RE.test(head.trim()) && /^\s*\((?:.*\d.*|[A-Z][A-Za-z′']{0,4})\)\s*$/.test(head) && (gap >= 0.3 * line.size || stepsDown)) {
 			const rest = [];
 			for (let j = i + 1; j <= to; j++) {
 				if (chars[j].c.trim() && !hangsBelowBaseline(chars[j]) && chars[j].size >= 0.85 * line.size) rest.push(chars[j].baseline);
@@ -950,14 +976,15 @@ function displayRows(lines) {
 function classifyByFlow(lines, cols) {
 	const unmeasured = [];
 	for (const col of cols) {
-		const own = lines.filter((line) => line.col === col && !line.furniture && !line.rot);
-		if (!flowColumn(own, col)) unmeasured.push(...own);
+		const all = lines.filter((line) => line.col === col && !line.rot);
+		const own = all.filter((line) => !line.furniture);
+		if (!flowColumn(own, col, all)) unmeasured.push(...own);
 	}
 	const orphans = lines.filter((line) => !line.furniture && (line.rot || !cols.includes(line.col)));
 	return unmeasured.concat(orphans);
 }
 
-function flowColumn(own, col) {
+function flowColumn(own, col, all = own) {
 	const width = (col.right - col.left) || 1;
 	const worded = (line) => line.textWords >= 1 && !line.tabular && line.eqNumFrom < 0 && line.eqNumTo < 0;
 	const wide = own.filter((line) => worded(line) && line.rect[2] - line.rect[0] > 0.6 * width);
@@ -994,28 +1021,56 @@ function flowColumn(own, col) {
 			margins.push(line.rect[0]);
 		}
 	}
+	// A list item is prose however much formula it holds, and it is known by
+	// its label: a label opening a full line, or opening a line at the same
+	// place as another item's.
+	// Items made of nothing but formula — "(I) ‖A_t − A_s‖ ≤ K₁|t − s|^β₁," — are
+	// items too, when a sibling's text starts where theirs does.
+	// Unless the list is itself a formula: items standing behind a brace, with
+	// the equation's number to the left of them all — "(3.4) { (i) … (ii) …".
+	// Nothing stands to the left of an item in a list of prose.
+	const behindSomething = (line) => all.some((other) => other !== line && !other.flow
+		&& other.rect[2] <= line.rect[0] + 0.25 * size && other.rect[2] > left + 0.5 * size
+		&& other.rect[1] < line.rect[3] && other.rect[3] > line.rect[1] - 2 * size
+		&& (other.blank || other.eqNumTo >= 0 || EQ_LABEL_RE.test(other.text.trim()) || DELIMITER_PIECE_RE.test(other.text)
+			|| (other.hangingOpeners && other.hangingOpeners.length)));
+	const listItem = (line) => line.itemStart !== null && !line.tabular && line.eqNumFrom < 0 && line.eqNumTo < 0
+		&& !behindSomething(line);
+	for (const line of own) {
+		if (line.flow || !listItem(line)) continue;
+		const siblings = own.some((other) => other !== line && listItem(other)
+			&& (sameLeft(line, other) || onMargin(line.itemStart, other.itemStart)));
+		if ((worded(line) && full(line)) || siblings) line.flow = true;
+	}
+	// An item's text, carried past a formula displayed inside the item, comes
+	// back to where the item's text started — "In particular, t ↦ K(t, s) is
+	// decreasing." under "(ii) For s ∈ [0, 1), the map …".
+	const itemMargins = own.filter((line) => line.flow && listItem(line)).map((line) => line.itemStart);
+	const onItemText = (line) => itemMargins.some((m) => onMargin(line.rect[0], m));
 	for (let i = 0; i < own.length; i++) {
 		const line = own[i], above = own[i - 1];
 		// The column's own edge is enough; an indent is only prose's when the
 		// line runs the measure or reads as prose — a formula can start a point
 		// or two from a paragraph's indent.
-		if (worded(line) && (onMargin(line.rect[0], left)
+		if (line.flow) continue;
+		if (worded(line) && (onMargin(line.rect[0], left) || onItemText(line)
 			|| (margins.some((m) => onMargin(line.rect[0], m)) && (full(line) || prose(line))))) line.flow = true;
+		// A paragraph's first line at its indent, before any line on the page
+		// has shown that indent to be one: a few ems in, and reading as prose —
+		// "For s ∈ [0, 1], we define the subspace H_s of H by".
+		else if (prose(line) && line.textWords >= 4 && line.rect[0] > left && line.rect[0] - left <= 2.5 * size
+			&& (!above || !above.flow || above.paraEnd || !full(above))) line.flow = true;
 		// A short last line at the margin carrying on a full line of prose —
 		// "Then" / "u ≤ v in Ω." — needs no words to be the sentence's end.
 		// (Zotero's paragraph break is no evidence against it: a tall exponent on
 		// the short line is enough to make it guess one. A colon is — that is
 		// how a display is introduced.)
-		else if (above && above.flow && !/:\s*$/.test(above.text) && full(above) && onMargin(line.rect[0], left)
+		// It may also start a little in, where a limit hangs left of its sum —
+		// "∑_{i=0} Ψ_i finishes the proof." — when it carries words.
+		else if (above && above.flow && !/:\s*$/.test(above.text) && full(above)
+			&& (onMargin(line.rect[0], left) || onItemText(line)
+				|| (line.textWords >= 2 && line.rect[0] > left && line.rect[0] - left <= 1.5 * size))
 			&& line.eqNumFrom < 0 && line.eqNumTo < 0 && !line.tabular && skip(above, line)) line.flow = true;
-	}
-	// A list item is prose however much formula it holds, and it is known by
-	// its label: a label opening a full line, or opening a line at the same
-	// place as another item's.
-	for (const line of own) {
-		if (line.flow || !worded(line) || !LIST_LABEL_RE.test(line.text)) continue;
-		if (full(line) || own.some((other) => other !== line && worded(other)
-			&& LIST_LABEL_RE.test(other.text) && sameLeft(line, other))) line.flow = true;
 	}
 	// On a margin the paragraph establishes, which can be passed down a list
 	// item or a caption line by line.
@@ -1031,9 +1086,12 @@ function flowColumn(own, col) {
 				(sameLeft(line, other) && (full(line) || full(other)
 					// a caption or quotation: narrower than the column, and set
 					// centred in it — which a formula's branches are not
+					// — at the text's own leading: two displays one above the other
+					// are centred too, but set apart further
 					|| (Math.abs(line.rect[2] - other.rect[2]) <= 0.5 * size
 						&& line.rect[2] - line.rect[0] > 0.5 * (right - left)
-						&& Math.abs((line.rect[0] - left) - (right - line.rect[2])) <= 1.5 * size)))
+						&& Math.abs((line.rect[0] - left) - (right - line.rect[2])) <= 1.5 * size
+						&& Math.abs(upper.baseline - lower.baseline) <= 1.15 * pitch)))
 				// a list item's hanging indent under its label
 				|| (other === above && other.flow && LIST_LABEL_RE.test(other.text)
 					&& line.rect[0] - other.rect[0] > 0.4 * size && line.rect[0] - other.rect[0] <= 4 * size));
@@ -1360,6 +1418,12 @@ function absorbDisplayRows(lines) {
 const LIST_LABEL_RE = /^\s*[([]?\s*(?:\d{1,3}|[ivxlcdm]{1,5}|\p{L})\s*[).\]]\s+\S/iu;
 const CLAUSE_END_RE = /[.;:!?\u2026]["'\u201d\u2019)\]]*\s*$/;
 
+// A bibliography entry's key. Keys come numbered, "[12]", or made of the
+// authors' names and a year, "[ABLM24]", "[Lê20]" — followed by an author's
+// name or initial. "[GG24] for a general criterion" is a citation in a
+// sentence, and "[Du]V" a formula.
+const BIB_KEY_RE = /^\s*(?:[[(]\d{1,3}[\])]|\[[\p{L}\p{N}ˆ^'’+-]{2,12}\](?=\s+\p{Lu}|\p{Lu}\.))/u;
+
 // "(see also M." / "G. Crandall": a name's initials broken across a line. The
 // second line opens with a capital and a stop, which is also what a lettered
 // list item looks like; the first ending on a lone initial is what it is not.
@@ -1562,8 +1626,10 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 		if (cur && !inRow && (ln.tabular || previous && previous.tabular)) cur = null;
 		// Cells of one table row are one line; the row after it is another.
 		if (cur && previous && previous.tableRow !== ln.tableRow) cur = null;
-		// An entry of a contents list begins a block of its own.
-		if (cur && ln.entryStart) cur = null;
+		// An entry of a contents list begins a block of its own, and so does an
+		// entry of a bibliography.
+		if (cur && (ln.entryStart || (/^\s*\[/.test(ln.text) && BIB_KEY_RE.test(ln.text)
+			&& previous && (previous.paraEnd || /\.\s*$/.test(previous.text))))) cur = null;
 		// A line may open with a bracketed number without being a list item:
 		// "(16) equals 1 for every closed path" is a cross-reference carrying a
 		// sentence over. What tells them apart is the line before — an item
@@ -1645,7 +1711,7 @@ function joinContinuations(blocks, typicalGap) {
 		// formula may be pulled back into the sentence before it.
 		const openExpression = /[=+×÷<>≤≥≈≡∼∈∉⊂⊆→↦−–—-]\s*$/u.test(at);
 		// A list item is its own thing, whatever the lead-in before it ended on.
-		if ((LIST_LABEL_RE.test(bt) && !continuesInitials(at, bt)) || (b.lines[0] && b.lines[0].entryStart)) continue;
+		if ((LIST_LABEL_RE.test(bt) && !continuesInitials(at, bt)) || (b.lines[0] && b.lines[0].entryStart) || (/^\s*\[/.test(bt) && BIB_KEY_RE.test(bt) && /\.\s*$/.test(at))) continue;
 		// A hanging indent is a list item's own shape: the label sits out to the
 		// left and everything after it is set in under it. So a line set in
 		// under a block that *opens with a list label* is the rest of that
@@ -1819,7 +1885,7 @@ function isBoundary(text, i, end, math, lineStarts) {
 function splitSentences(text, math, lineStarts) {
 	// A bibliography entry is one unit: it is full of initials, abbreviated
 	// journal names and years, and none of those breaks are worth having.
-	if (/^\s*[[(]\d{1,3}[\])]/.test(text)) return [[0, text.length]];
+	if (BIB_KEY_RE.test(text)) return [[0, text.length]];
 
 	const out = [];
 	let start = 0;

@@ -128,9 +128,16 @@ skip apart, each full line running the measure. So, per column:
   item's continuation, a hanging indent, or a caption or quotation set
   narrower than the column and centred in it, down line by line;
 - a **list item** is prose however much formula it holds: a label opening a full
-  line, or opening a line where a sibling item's label opens;
+  line, or a sibling item's text starting where its own does (labels are set
+  right-aligned, so "(i)" and "(iii)" start apart but their text lines up) —
+  unless something stands to the left of the items, a brace or an equation
+  number, which makes the whole list one displayed formula; and a line on an
+  item's text indent, carried on past a display, is prose too;
+- a paragraph's **first line** at an indent no full line has shown yet, reading
+  as prose, is prose — "For s ∈ [0, 1], we define the subspace H_s of H by";
 - a **short last line** at the margin carrying on a full line of prose — "Then"
-  / "u ≤ v in Ω." — is prose without a word in it;
+  / "u ≤ v in Ω." — is prose without a word in it, and may start a little in
+  where a limit hangs left of its sum;
 - a fragment on a prose line's baseline, straight after it, or a piece standing
   inside it, is part of it.
 
@@ -140,6 +147,15 @@ is a heading, a caption or a title. A numbered line is a formula, and so is a
 full line with no words at all. What stands beside or stacked with a formula —
 a numerator, a limit, a brace's other branch — joins it by position, and a
 line on the flow never does.
+
+A word is a run of letters, a ligature included — "define" set with an `fi` was
+once two runs of two letters and no word at all.
+
+These rules were checked against a neural formula detector run over the corpus
+(`tools/detect.mjs`, with the model kept out of the repository): on 10,000 lines
+the two now disagree on two, and in both the detector is the one that is wrong.
+The detector is not part of the plugin, and the comparison is for finding where
+the rules go wrong, not for deciding at run time.
 
 A margin is matched to within a quarter of an em: TeX sets margins exactly, an
 italic capital overhangs its origin by a point or two, and a centred formula
@@ -346,7 +362,7 @@ of the work is in throwing candidates out:
 | `1.2. State of the art` | a run-in section heading's number |
 | `the bound holds.¹² The rest` | a raised footnote marker read as a decimal |
 | `... and then` | an ellipsis not followed by a capital |
-| `[12] Smith, J. A. Some paper.` | a bibliography entry, kept whole |
+| `[12] Smith, J. A. Some paper.`, `[Lê20] K. Lê. A lemma.` | a bibliography entry, kept whole — and begun as a block of its own when its key, followed by an author, opens a line |
 
 A footnote marker is masked out of the text, but an **exponent** must not be:
 its digits come from the roman text font too — `h²`, `U^{k+1}` — so small,
