@@ -2751,4 +2751,20 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.strictEqual(long && long.kind, "display", `a flush-left formula with operator names is a display: ${JSON.stringify(long)}`);
 }
 
+// A running head with the page's number at one end — "34 Properties of the
+// flow …" — is furniture, however long and lower-case its title.
+{
+	const PAGE = [0, 0, 595, 842];
+	const units = segmentPage(layout([
+		{ pieces: [{ x: 86, text: "34" }, { x: 275, text: "Properties of the flow of the driftless equation" }], y: 765, size: 10.9, para: true },
+		{ text: "which shows the bound. We now turn to the second estimate, which is the harder", x: 86, y: 730, size: 10.9 },
+		{ text: "of the two, and whose proof takes up the rest of this section of the article.", x: 86, y: 716, size: 10.9 },
+		{ text: "It rests on the comparison principle proved in the previous section of it.", x: 86, y: 702, size: 10.9, para: true },
+		{ pieces: [{ x: 86, text: "Properties of the flow of the driftless equation" }, { x: 498, text: "35" }], y: 40, size: 10.9, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	assert.ok(!units.some((u) => u.text.includes("Properties of the flow")), `running heads are dropped: ${got}`);
+	assert.ok(units[0].text.startsWith("which shows the bound."), `the page starts with its text: ${got}`);
+}
+
 console.log("all tests passed");

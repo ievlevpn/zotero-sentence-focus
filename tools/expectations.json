@@ -184,6 +184,13 @@
     "has": "[ART23] L. Anzeletti, A. Richard, and E. Tanre",
     "kind": "text"
    }
+  ],
+  "38": [
+   {
+    "has": "which shows (4.33).",
+    "kind": "text",
+    "lacks": "Emerging"
+   }
   ]
  },
  "2409.11130v1.pdf": {
@@ -214,6 +221,13 @@
     "has": "Since p ≥ 2 was arbitrary",
     "kind": "text",
     "lacks": "[Du]"
+   }
+  ],
+  "12": [
+   {
+    "has": "where we used the definition of Λ(n, k).",
+    "kind": "text",
+    "lacks": "Preliminaries"
    }
   ]
  },
@@ -343,6 +357,13 @@
     "has": "The complete sampling procedure",
     "kind": "text"
    }
+  ],
+  "5": [
+   {
+    "has": "Gated PixelCNN [59] 4.60",
+    "kind": "text",
+    "lacks": "Sparse"
+   }
   ]
  },
  "2010.02502.pdf": {
@@ -370,6 +391,13 @@
     "has": "where θ = arccos",
     "kind": "text",
     "lacks": "These values"
+   }
+  ],
+  "7": [
+   {
+    "has": "0.2 14.04",
+    "kind": "text",
+    "lacks": "0.5"
    }
   ]
  },

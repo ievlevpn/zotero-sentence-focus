@@ -489,7 +489,7 @@ function makeLine(chars, from, to) {
 	// the layout sees one baseline it gives one line, cells and all. Several
 	// such gaps is a row; one of them is the run up to an equation number, and
 	// justified prose never stretches a word space this far.
-	let wideGaps = 0, lastGapAt = -1;
+	let wideGaps = 0, lastGapAt = -1, firstGapAt = -1;
 	// Cells at two scales. A gulf of two and a half ems is a column gap nobody
 	// could take for anything else; a table of figures sets its columns much
 	// closer — about an em — which is still three word spaces.
@@ -506,6 +506,7 @@ function makeLine(chars, from, to) {
 		const r = chars[i].rect;
 		if (r[0] - chars[i - 1].rect[2] > 2.5 * size) {
 			wideGaps++;
+			if (lastGapAt < 0) firstGapAt = i;
 			lastGapAt = i;
 			cells.push([r[0], r[2]]);
 		} else {
@@ -526,6 +527,11 @@ function makeLine(chars, from, to) {
 	// ...and what comes before it is a title, words rather than figures: "base
 	// 6 512 2048 8 … 65" ends a row of a table.
 	const title = text.slice(0, Math.max(0, text.length - lastCell.length));
+	// A running head carries the page's number at one end, a gulf from its
+	// title: "34 Properties of the flow …", "… driftless equation 35".
+	let firstCell = "";
+	if (firstGapAt >= 0) for (let i = from; i < firstGapAt; i++) firstCell += chars[i].c;
+	const folio = wideGaps >= 1 && (/^\s*\d{1,4}\s*$/.test(firstCell) || /^\s*\d{1,4}\s*$/.test(lastCell));
 	const pageNumber = wideGaps >= 1 && /^\s*\d{1,4}\s*$/.test(lastCell)
 		&& (title.match(/\p{L}/gu) || []).length >= 0.5 * title.replace(/\s/g, "").length;
 
@@ -570,6 +576,7 @@ function makeLine(chars, from, to) {
 		tabular: wideGaps >= 2 || leader || pageNumber,
 		// A contents entry is a title and a page number: two cells, not three.
 		contents: leader || (pageNumber && wideGaps === 1),
+		folio,
 		glyphKinds,
 		mathFrac: mathCount / glyphs,
 		variableFrac,
@@ -579,6 +586,7 @@ function makeLine(chars, from, to) {
 		paraEnd: chars[to].paraEnd,
 		rot: chars[from].rot,
 		bold: chars[from].bold,
+		font: chars[from].font,
 		kind: "text",
 		blank,
 		furniture: blank,
@@ -765,11 +773,16 @@ function verticalGutter(ls, pageWidth) {
 			runStart = -1;
 		}
 	}
-	if (!best || best.w < 8) return null;
+	if (!best || best.w < 2) return null;
 	const x = left + best.at;
+	const sides = [ls.filter((l) => centerX(l) < x), ls.filter((l) => centerX(l) >= x)];
+	// Two floats side by side — a table and its caption beside another — are
+	// two columns however narrow the white between them.
+	const captioned = sides.every((side) => side.some((l) => CAPTION_RE.test(l.text)));
+	if (best.w < 8 && !captioned) return null;
 	const top = Math.max(...ls.map((l) => l.rect[3])), bottom = Math.min(...ls.map((l) => l.rect[1]));
 	const minLines = Math.max(3, Math.ceil(ls.length * 0.15));
-	for (const side of [ls.filter((l) => centerX(l) < x), ls.filter((l) => centerX(l) >= x)]) {
+	for (const side of sides) {
 		if (side.length < minLines) return null;
 		const span = Math.max(...side.map((l) => l.rect[3])) - Math.min(...side.map((l) => l.rect[1]));
 		if (span < 0.5 * (top - bottom)) return null;
@@ -864,7 +877,7 @@ function markFurniture(lines, viewBox) {
 		// Short, or a bare number, or set without a single lower-case letter —
 		// a running head is usually capitals or small capitals and can run most
 		// of the measure, so width alone would miss it.
-		const looksLikeFurniture = width < 0.6 * colWidth
+		const looksLikeFurniture = width < 0.6 * colWidth || line.folio
 			|| /^[\s\d.,|\u2013\u2014-]+$/.test(line.text)
 			|| /^[^\p{Ll}]+$/u.test(line.text.trim());
 		if (!looksLikeFurniture) continue;
@@ -1790,10 +1803,25 @@ function figureText(run, lines, size) {
 				.sort((p, q) => (down ? q.rect[3] - p.rect[3] : p.rect[1] - q.rect[1]));
 			if (!next.length) break;
 			const line = next[0];
-			const m = CAPTION_RE.exec(line.text);
+			// A caption of several lines is met by its last line going up; its
+			// first says what it is.
+			let head = line;
+			if (!down && words(line)) {
+				for (let k = 0; k < 6 && !CAPTION_RE.test(head.text); k++) {
+					const above = lines.find((l) => l !== head && l.rect[1] > head.rect[1] && l.rect[1] - head.rect[3] < 0.6 * head.size
+						&& l.rect[0] < head.rect[2] && l.rect[2] > head.rect[0]);
+					if (!above) break;
+					head = above;
+				}
+			}
+			const m = CAPTION_RE.exec(head.text);
 			if (m) {
 				const reach = Math.abs((down ? line.rect[3] : line.rect[1]) - start);
-				if (reach < bestReach) { bestReach = reach; best = m; }
+				// A caption set close under another block — "Table 18" under its
+				// table, over this figure — is that block's.
+				const beyond = down ? null : lines.filter((l) => l.rect[0] < head.rect[2] && l.rect[2] > head.rect[0]
+					&& l.rect[1] >= head.rect[3] - 0.1 * size).reduce((d, l) => Math.min(d, l.rect[1] - head.rect[3]), Infinity);
+				if (reach < bestReach && !(beyond !== null && (beyond < reach || beyond < 2 * size))) { bestReach = reach; best = m; }
 				break;
 			}
 			if (words(line)) break;
@@ -1803,6 +1831,10 @@ function figureText(run, lines, size) {
 	}
 	return !!best && !best[1];
 }
+
+// Zotero reports no weight; the font's name does — "NimbusRomNo9L-Medi".
+const BOLD_FONT_RE = /bold|medi|black|heavy|demi|cmbx/i;
+const setBold = (line) => /\p{L}{2,}/u.test(line.text) && BOLD_FONT_RE.test(line.font || "");
 
 function tableOf(run, colWidth, size, col) {
 	const multiRows = run.filter((r) => r.cells.length >= 2);
@@ -1883,7 +1915,9 @@ function tableOf(run, colWidth, size, col) {
 	const centre = (left + right) / 2;
 	const heading = (r, k) => r.lines.length === 1 && occupied(r) === 1
 		&& (Math.abs((r.rect[0] + r.rect[2]) / 2 - centre) <= size
-			|| (k + 1 < run.length && run[k + 1].cells[0][0] >= r.rect[0] + 0.5 * size
+			// or set in bold over rows that are not — "Conditional"
+			|| (setBold(r.lines[0]) && k + 1 < run.length && !run[k + 1].lines.every(setBold))
+			|| (k + 1 < run.length && r.lines.some((l) => /\p{L}{2,}/u.test(l.text)) && run[k + 1].cells[0][0] >= r.rect[0] + 0.5 * size
 				&& run[k + 1].cells[0][0] <= r.rect[0] + 3 * size
 				&& columnOf(run[k + 1].cells[0][0]) === columnOf(r.rect[0])));
 	const partial = run.map((r, k) => occupied(r) <= columns / 2 && !r.cells.some(spans) && textual(r) && !labelled(r) && !heading(r, k));
