@@ -160,8 +160,13 @@ once two runs of two letters and no word at all. Small capitals are set smaller
 but on the baseline, where no index sits, so "ADAM’S UPDATE RULE" is words; an
 operator's name takes its argument straight after it — "Ric(Y, X)",
 "Hess_L(Y, Y)" — which no word of prose does, so it is formula. A bullet is a
-list label like "(i)", and a caption — a line opening "Figure 2:" — is words
-whatever formula it quotes.
+list label like "(i)", and so is a dash set apart from the words it heads, as
+Word sets its lists; a caption — a line opening "Figure 2:" — is words whatever
+formula it quotes. A display as wide as its column crowds its number against
+it, a space away rather than an em — "…)). (24)" in two columns — and the
+number still counts when it sits at the right margin after formula, not after a
+word as a cross-reference "in (5.1)" does; every piece of a numbered row is
+then off the flow.
 
 These rules were checked against a neural formula detector run over the corpus
 (`tools/detect.mjs`, with the model kept out of the repository): on 10,000 lines
@@ -437,7 +442,8 @@ and no column with the text of the page, and rows are gathered from lines of
 shorter.
 
 **Columns.** Found from vertical whitespace: bin the x axis, look for a run of
-empty bins away from the margins, and cut there. Two constraints keep that
+empty bins away from the margins (five points will do: an IEEE gutter, less
+what glyphs overhang into it), and cut there. Two constraints keep that
 honest. A gutter has to separate two *bodies* of text and run the height of the
 page to do it — one wide gap does not, or the blank run before an equation
 number would leave a "column" holding that number and nothing else, and the
@@ -513,7 +519,12 @@ diagram's boxes. What a block of text is, its caption says — the caption reach
 first going up or down from it, past the figure's other labels but not past a
 line of prose. And a figure's labels set beside a column of text are kept out of
 that text's rows by their type size, and by the text's lines standing one under
-another on a common margin, as a paragraph's do.
+another on a common margin, as a paragraph's do. A caption of
+several lines is found by its first line, and one set close under another block
+belongs to that block. A table its caption names may have formulas for cells —
+a regression's terms, "Treatment × Week₋₁₃" — and is still a table; a group
+heading set in bold over its rows is a row of its own. Two floats side by side,
+each with its caption, are two columns however narrow the white between them.
 
 Each table row is read as one thing and **highlighted as one band** across the
 table, and a table is read row by row, a row column by column — a name, then
@@ -552,7 +563,8 @@ limits are read as part of its own row it stands clear of the text above it.
 Beyond that, running heads and page numbers are dropped only when all of a
 margin position, a body-sized font, a short line — or a line with no
 lower-case letter in it, since a running head is often capitals and can run
-most of the measure — and a clear gap to the text agree. Losing the first line
+most of the measure, or a line with the page's number at one end, a gulf from
+its title ("34 Properties of the flow …") — and a clear gap to the text agree. Losing the first line
 of a page is worse than keeping a page number, so the test is deliberately hard
 to pass. The gap is measured against the nearest line that is *not on the same
 row*: a page number and the running head across from it are one row, and each

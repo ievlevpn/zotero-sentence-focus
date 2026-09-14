@@ -597,6 +597,7 @@ function makeLine(chars, from, to) {
 		leftLabelRaised: false,
 		labelFrom: -1,
 		labelGap: 0,
+		crowdedLabelFrom: -1,
 	};
 	markEquationNumber(chars, line);
 	markSuperscripts(chars, line);
@@ -619,6 +620,20 @@ function markEquationNumber(chars, line) {
 			line.labelGap = gap;
 		}
 		break; // only the last gap can hold a right-margin label
+	}
+	// A display as wide as its column crowds its number against it — two
+	// columns leave little room — and the gap shrinks to a space: "…)). (24)".
+	if (line.labelFrom < 0) {
+		let tail = "", i = to;
+		while (i > from && !/\s/.test(chars[i].c) && !(chars[i].rect[0] - chars[i - 1].rect[2] >= 0.3 * line.size)) i--;
+		for (let j = i; j <= to; j++) tail += chars[j].c;
+		// A cross-reference follows a word — "if ω(…) in (5.1)" — and a number
+		// the formula, or the punctuation closing it.
+		let k = Math.max(from, i - 1);
+		while (k > from && /\s/.test(chars[k].c)) k--;
+		const word = /\p{L}/u.test(chars[k].c) && !chars[k].mathFont && k > from && /\p{L}/u.test(chars[k - 1].c);
+		if (i > from && !word && chars[i].rect[0] - chars[i - 1].rect[2] >= 0.3 * line.size
+			&& /^\s*\(\d{1,3}(?:\.\d{1,3}){0,2}[a-z]?\)\s*$/.test(tail)) line.crowdedLabelFrom = i;
 	}
 	// Some styles set the number at the left margin instead, and there the
 	// first gap is the one that matters. Where the formula is too wide for it,
@@ -779,7 +794,7 @@ function verticalGutter(ls, pageWidth) {
 	// Two floats side by side — a table and its caption beside another — are
 	// two columns however narrow the white between them.
 	const captioned = sides.every((side) => side.some((l) => CAPTION_RE.test(l.text)));
-	if (best.w < 8 && !captioned) return null;
+	if (best.w < 5 && !captioned) return null;
 	const top = Math.max(...ls.map((l) => l.rect[3])), bottom = Math.min(...ls.map((l) => l.rect[1]));
 	const minLines = Math.max(3, Math.ceil(ls.length * 0.15));
 	for (const side of sides) {
@@ -921,6 +936,20 @@ function numbersFormula(line) {
 	return glyphs >= 2 && formula / glyphs >= 0.5 && line.textWords <= 3;
 }
 
+// ...and what stands before a crowded number is formula, not a sentence
+// ending on a cross-reference to one.
+function crowdedFormula(line, at) {
+	let glyphs = 0, formula = 0;
+	for (let i = line.from; i < at; i++) {
+		const kind = line.glyphKinds[i - line.from];
+		if (!kind) continue;
+		glyphs++;
+		if (kind & 2) formula++;
+	}
+	return glyphs >= 4 && formula / glyphs >= 0.5 && line.textWords <= 2;
+}
+
+
 function remeasureWithoutNumber(line) {
 	const start = line.eqNumTo >= 0 ? line.eqNumTo + 1 : line.from;
 	const end = line.eqNumFrom >= 0 ? line.eqNumFrom - 1 : line.to;
@@ -998,6 +1027,9 @@ function markEquationNumbers(lines) {
 		}
 		if (line.labelFrom >= 0 && (line.labelGap >= 2.5 * line.size || atRightMargin)) {
 			line.eqNumFrom = line.labelFrom;
+		} else if (line.crowdedLabelFrom >= 0 && col && line.rect[2] >= col.right - 0.5 * line.size
+			&& crowdedFormula(line, line.crowdedLabelFrom)) {
+			line.eqNumFrom = line.crowdedLabelFrom;
 		}
 		// A list label sits half an em from its item; an equation's number is
 		// set well clear of its formula. A number, as opposed to "(a)" or "(iii)",
@@ -1086,7 +1118,12 @@ function classifyByFlow(lines, cols) {
 
 function flowColumn(own, col, all = own) {
 	const width = (col.right - col.left) || 1;
-	const worded = (line) => line.textWords >= 1 && !line.tabular && line.eqNumFrom < 0 && line.eqNumTo < 0;
+	// A row that carries an equation's number is a display, every piece of
+	// it: "min max_{D₁,D₂,D₃}" standing at the margin before "∑ (…). (24)".
+	const numbered = own.filter((l) => l.eqNumFrom >= 0 || l.eqNumTo >= 0);
+	const onNumberedRow = (line) => numbered.some((n) => n !== line
+		&& Math.min(n.rect[3], line.rect[3]) - Math.max(n.rect[1], line.rect[1]) > 0.5 * Math.min(n.rect[3] - n.rect[1], line.rect[3] - line.rect[1]));
+	const worded = (line) => line.textWords >= 1 && !line.tabular && line.eqNumFrom < 0 && line.eqNumTo < 0 && !onNumberedRow(line);
 	const wide = own.filter((line) => worded(line) && line.rect[2] - line.rect[0] > 0.6 * width);
 	if (wide.length < 3) return false;
 	const left = median(wide.map((line) => line.rect[0]));
@@ -1224,7 +1261,7 @@ function flowColumn(own, col, all = own) {
 	for (let pass = 0; pass < 8; pass++) {
 		let changed = false;
 		for (const line of own) {
-			if (line.flow || line.inline || line.tabular) continue;
+			if (line.flow || line.inline || line.tabular || line.eqNumFrom >= 0 || line.eqNumTo >= 0 || onNumberedRow(line)) continue;
 			const middle = standsAt(line);
 			const anchor = own.find((other) => (other.flow || other.inline) && ((other.flow && middle > other.rect[1] && middle < other.rect[3]
 				&& line.rect[0] >= other.rect[0] - size && line.rect[2] <= other.rect[2] + size)
@@ -1543,8 +1580,9 @@ function absorbDisplayRows(lines) {
 // ends on a semicolon runs straight into the next one: the layout sees no
 // indent between them so it marks no paragraph break, and a semicolon is not a
 // full stop, so nothing else separates them either.
-// A bullet is a label too: "• One has V_β = {0} for every β < α."
-const LIST_LABEL_RE = /^\s*(?:[([]?\s*(?:\d{1,3}|[ivxlcdm]{1,5}|\p{L})\s*[).\]]\s+|[•◦▪▸‣]\s*)\S/iu;
+// A bullet is a label too: "• One has V_β = {0} for every β < α.", and so is
+// a dash set apart from the word it heads, "-  A confidence score C(x),".
+const LIST_LABEL_RE = /^\s*(?:[([]?\s*(?:\d{1,3}|[ivxlcdm]{1,5}|\p{L})\s*[).\]]\s+|[•◦▪▸‣]\s*|[-–]\s+(?=\p{L}+\s+\p{L}{2}))\S/iu;
 const CLAUSE_END_RE = /[.;:!?\u2026]["'\u201d\u2019)\]]*\s*$/;
 
 // A bibliography entry's key. Keys come numbered, "[12]", or made of the
@@ -1698,8 +1736,9 @@ function detectTables(lines, cols) {
 				j++;
 			}
 			i = j + 1;
-			const table = tableOf(run, colWidth, size, col);
-			if (!table || figureText(run, lines, size)) continue;
+			const said = captionOf(run, lines, size);
+			const table = tableOf(run, colWidth, size, col, said === "table");
+			if (!table || said === "figure") continue;
 			const tableId = nextTable++;
 			// A label set between two rows — "DeBERTa XXL" beside the rows it
 			// names, "(A)" level with the middle of its group — is read with one
@@ -1787,7 +1826,7 @@ function detectTables(lines, cols) {
 // first going up or down from it, past the figure's other labels but not past
 // a line of prose. A figure's text is not a table.
 const CAPTION_RE = /^\s*(?:(Table|TABLE|Tab\.)|Figure|FIGURE|Fig\.)\s*[\dA-Z]/;
-function figureText(run, lines, size) {
+function captionOf(run, lines, size) {
 	const left = Math.min(...run.map((r) => r.rect[0])), right = Math.max(...run.map((r) => r.rect[2]));
 	const inRun = new Set(run.flatMap((r) => r.lines));
 	const near = lines.filter((l) => !inRun.has(l) && !l.blank && l.rect[0] < right && l.rect[2] > left);
@@ -1829,14 +1868,16 @@ function figureText(run, lines, size) {
 			edge = down ? Math.min(edge, line.rect[1]) : Math.max(edge, line.rect[3]);
 		}
 	}
-	return !!best && !best[1];
+	return !best ? null : best[1] ? "table" : "figure";
 }
 
 // Zotero reports no weight; the font's name does — "NimbusRomNo9L-Medi".
 const BOLD_FONT_RE = /bold|medi|black|heavy|demi|cmbx/i;
 const setBold = (line) => /\p{L}{2,}/u.test(line.text) && BOLD_FONT_RE.test(line.font || "");
 
-function tableOf(run, colWidth, size, col) {
+// A table its caption names can have formulas for cells — a regression's
+// terms, "Treatment × Week₋₁₃" — and is still a table.
+function tableOf(run, colWidth, size, col, named = false) {
 	const multiRows = run.filter((r) => r.cells.length >= 2);
 	if (run.length < 3 || multiRows.length < 2) return null;
 	// Rows of words and figures, not formula: at least two rows with two cells
@@ -1848,7 +1889,7 @@ function tableOf(run, colWidth, size, col) {
 	const runningProse = (l) => l.flow && l.textWords >= 3 && l.tightCells.length <= 1;
 	const wordCells = (r) => r.lines.reduce((n, l) => n
 		+ (!runningProse(l) && (l.kind !== "display" || figures(l)) ? l.tightCells.length : 0), 0);
-	if (multiRows.filter((r) => wordCells(r) >= 2).length < 2) return null;
+	if (multiRows.filter((r) => wordCells(r) >= 2).length < 2 && !named) return null;
 	// A list set with hanging labels — a bibliography's keys, numbered notes —
 	// has a column of labels and a column of running text, which runs to the
 	// margin row after row. A table's cells stop short of it.
@@ -1865,14 +1906,14 @@ function tableOf(run, colWidth, size, col) {
 		glyphs += n;
 		formula += n * l.formulaFrac;
 	}
-	if (formula > 0.35 * glyphs) return null;
+	if (formula > 0.35 * glyphs && !named) return null;
 	// ...and whose lines were already read as a formula. (An integral sign can
 	// arrive as the digit "1", which no measure of formula glyphs counts.) A
 	// table of figures with a ± in its cells is read as formula line by line,
 	// but its cells are figures, not formula.
 	let displayed = 0;
 	for (const r of run) for (const l of r.lines) if (l.kind === "display") displayed += l.to - l.from + 1;
-	if (displayed > 0.5 * glyphs && formula > 0.15 * glyphs) return null;
+	if (displayed > 0.5 * glyphs && formula > 0.15 * glyphs && !named) return null;
 	// Gutters: stretches that nearly all rows of several cells leave white.
 	const width = Math.ceil(right - left) + 1;
 	const count = new Uint16Array(width);

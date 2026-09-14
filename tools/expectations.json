@@ -122,6 +122,12 @@
     "has": "(BC) u(t, x) = 0",
     "kind": "display"
    }
+  ],
+  "28": [
+   {
+    "has": "we will succeed if",
+    "kind": "text"
+   }
   ]
  },
  "2412.01645v2.pdf": {
@@ -443,6 +449,50 @@
    {
     "has": "From now on we will assume",
     "kind": "text"
+   }
+  ]
+ },
+ "2001.06937.pdf": {
+  "6": [
+   {
+    "has": "Denoting P the set of all Borel",
+    "kind": "text"
+   },
+   {
+    "has": "(LGAN (G, Dk) + λLF M (G, Dk))",
+    "kind": "display",
+    "lacks": "(24)"
+   }
+  ],
+  "9": [
+   {
+    "has": "LRSGAND = −E",
+    "kind": "display",
+    "lacks": "(51)"
+   }
+  ]
+ },
+ "w_2609.03186.pdf": {
+  "8": [
+   {
+    "has": "A confidence score",
+    "kind": "text",
+    "lacks": "segmentation"
+   }
+  ]
+ },
+ "w_2609.09673.pdf": {
+  "37": [
+   {
+    "has": "0.050 (0.102)",
+    "kind": "text",
+    "lacks": "0.064"
+   }
+  ],
+  "38": [
+   {
+    "has": "Total savings",
+    "kind": "display"
    }
   ]
  }

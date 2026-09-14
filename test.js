@@ -2767,4 +2767,37 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.ok(units[0].text.startsWith("which shows the bound."), `the page starts with its text: ${got}`);
 }
 
+// --- IEEE two-column pages, Word lists and tables ------------------------------
+
+// A list in a Word document, its items set off by dashes.
+{
+	const PAGE = [0, 0, 595, 842];
+	const units = segmentPage(layout([
+		{ text: "For every case the model produced three outputs, which were stored for the review:", x: 72, y: 760, size: 11, para: true },
+		{ pieces: [{ x: 90, text: "- " }, { x: 108, text: "A predicted segmentation «S(x)»," }], y: 740, size: 11, para: true },
+		{ pieces: [{ x: 90, text: "- " }, { x: 108, text: "A confidence score «C(x)»," }], y: 724, size: 11, para: true },
+		{ pieces: [{ x: 90, text: "- " }, { x: 108, text: "The similarity between «S(x)» and the reference contour." }], y: 708, size: 11, para: true },
+		{ text: "Cases were selected if they were flagged as low confidence by the model or the review.", x: 72, y: 686, size: 11, para: true },
+	], PAGE), PAGE).sentence;
+	const items = units.filter((u) => u.text.startsWith("-"));
+	assert.ok(items.length === 3 && items.every((u) => u.kind === "text"), `dashed items are prose: ${JSON.stringify(units.map((u) => [u.kind, u.text]))}`);
+}
+
+// A regression table whose row labels are set as equations: its caption says
+// it is a table.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 11;
+	const row = (y, k, v) => ({ pieces: [{ x: 150, text: `«Treatment × Week~−${k}~»` }, { x: 390, text: v }], y, size, para: true });
+	const units = segmentPage(layout([
+		{ text: "Table A2. Parallel Trend Test", x: 74, y: 780, size, para: true },
+		{ text: "Number of errors", x: 380, y: 760, size, para: true },
+		row(740, 13, "0.050 (0.102)"), row(723, 12, "0.064 (0.081)"), row(706, 11, "0.061 (0.077)"), row(689, 10, "0.061 (0.074)"),
+		{ text: "Note: SEs are clustered at the doctor level, and estimated with all control variables.", x: 78, y: 660, size: 9, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text]));
+	const rows = units.filter((u) => u.text.includes("Treatment"));
+	assert.ok(rows.length === 4 && rows.every((u) => u.kind === "text" && /\(0\.\d+\)/.test(u.text)), `a named table's formula cells are rows: ${got}`);
+}
+
 console.log("all tests passed");
