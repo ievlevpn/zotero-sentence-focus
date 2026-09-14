@@ -2394,4 +2394,93 @@ function fromReport(rows, opts = {}) {
 	assert.ok(units.some((u) => u.kind === "text" && u.text.endsWith("Then")), `Then ends its sentence: ${got}`);
 }
 
+// --- a glyph with no character, mid-line ---------------------------------------------
+
+// "N_n ≍ n⁹": the ≍ arrives as nothing at all, leaving a gap wider than a word
+// space in the middle of the line. Only a column's gulf is a reason to break a
+// line's highlight in two.
+{
+	const CM = "UVFEFX+CMMI10";
+	const unit = segmentPage(layout([
+		{ pieces: [
+			{ text: "number of 12-subsets grows like «n»^12^ while «N»~n~", x: 82 },
+			{ text: "«n»^9^; see [4, §2].", x: 319 },         // 15pt on from N_n
+		], y: 351, size: 10.9, mathFont: CM, para: true },
+	]), VIEW).sentence[0];
+	assert.strictEqual(unit.rects.length, 1, `one line, one box: ${JSON.stringify(unit.rects.map((r) => r.map(Math.round)))}`);
+}
+
+// --- a run-in numbered paragraph is not a hanging list item ----------------------------
+
+// "3. Gibbs measures with spectral potentials. In Section 5 we replace the
+// uniform target / by" and then a displayed formula, set in. A list item's
+// continuation hangs under its text; this paragraph's second line is back at
+// the margin, so the formula set in under it is a formula, not more of it.
+{
+	const PAGE = [0, 0, 612, 792];
+	const units = segmentPage(fromReport([
+		[82, 530, 430, 440, 10.9, "GGLDKP+SFRM1095", "size-varying chain and, in our view, the reason to prefer it. The price is that w must be", false],
+		[82, 530, 417, 427, 10.9, "GGLDKP+SFRM1095", "chosen so that the chain does not spend almost all of its time at the wrong sizes; choosing", false],
+		[82, 530, 389, 399, 10.9, "GGLDKP+SFRM1095", "Wang–Landau scheme [29]. Correctness does not depend on the quality of w; only efficiency", false],
+		[82, 106, 376, 386, 10.9, "GGLDKP+SFRM1095", "does.", true],
+		[82, 530, 359, 368, 10.9, "HBVJLZ+SFBX1095", "3. Gibbs measures with spectral potentials. In Section 5 we replace the uniform target", false],
+		[82, 94, 346, 355, 10.9, "GGLDKP+SFRM1095", "by", true],
+		[138, 213, 323, 341, 10.9, "UVFEFX+CMMI10", "πβ,k(X) := 1", true],
+		[200, 219, 315, 326, 10.9, "EZVZGK+CMMI8", "Zβ,k", true],
+		[225, 368, 323, 336, 10.9, "UVFEFX+CMMI10", "exp(−β pk(X)), pk(X) :=", true],
+		[388, 530, 322, 336, 10.9, "UVFEFX+CMMI10", "λi(X)k = tr(AkX), (4)", true],
+		[82, 530, 298, 308, 10.9, "GGLDKP+SFRM1095", "the potential being the Newton polynomial (power sum) of degree k of the adjacency spectrum,", false],
+	]), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text.slice(0, 50)]));
+	assert.ok(units.some((u) => u.kind === "text" && u.text.endsWith("uniform target by")), `the sentence stops at "by": ${got}`);
+	assert.ok(units.some((u) => u.kind === "display" && u.text.includes("exp")), `and the formula is a formula: ${got}`);
+}
+
+// --- a table row with narrower gaps than the rows around it -----------------------------
+
+// Its cells are closer together than the wide-gap test allows, so on its own
+// it is a line of text; between two rows of the same table it is a row.
+{
+	const PAGE = [0, 0, 612, 792];
+	const row = (y, cells, extra = {}) => ({ pieces: cells.map(([x, text]) => ({ x, text })), y, size: 10.9, ...extra });
+	const units = segmentPage(layout([
+		// Rows 1 and 3 and the header have two cell gaps each wider than the
+		// wide-gap test; row 2's cells are closer, one gulf and two lesser gaps.
+		row(700, [[221, "state space"], [310, "moves"], [370, "irreducible?"], [460, "cost/step"]], { para: true }),
+		row(676, [[105, "Alg. 1 (Section 3)"], [221, "Omega"], [300, "AjAi"], [340, "hypothesis"], [460, "O(n2) tests"]], { para: true }),
+		row(659, [[105, "Alg. 2 (Algorithm 4.2)"], [238, "Omega"], [304, "AjAi"], [346, "hypothesis (weaker)"], [460, "O(n2) tests"]], { para: true }),
+		row(642, [[105, "Alg. 3 (Algorithm 4.4)"], [228, "sqcup Omega"], [300, "Ai"], [340, "theorem"], [460, "O(n) tests"]], { para: true }),
+		{ text: "Table 2. The three chains. All three are reversible with the correct conditional", x: 118, y: 622, size: 10.9 },
+		{ text: "law; they differ in whether irreducibility is assumed or proved.", x: 118, y: 609, size: 10.9, para: true },
+	], PAGE), PAGE).sentence;
+	const alg2 = units.find((u) => u.text.startsWith("Alg. 2"));
+	assert.ok(alg2 && alg2.text.includes("tests"), `row 2 is one row: ${JSON.stringify(units.map((u) => u.text))}`);
+	assert.strictEqual(alg2.rects.length, 1, `drawn as one band: ${JSON.stringify(alg2.rects.map((r) => r.map(Math.round)))}`);
+}
+
+// --- a formula's second half, carrying words, on the formula's own baseline --------------
+
+// "p_k(X) = ∑_{v∈V(X)} ν_k(X, v),   ν_k(X, v) := #{closed k-walks based at v},"
+// arrives as the formula's head and a separate line for the rest, which has
+// italic words in it. It starts in the middle of the column, on the baseline
+// of the formula before it: no line of prose starts there.
+{
+	const PAGE = [0, 0, 612, 792];
+	const units = segmentPage(fromReport([
+		[82, 530, 304, 314, 10.9, "GGLDKP+SFRM1095", "of [4] makes the character ranges of consecutive Ωn disjoint, which combines particularly well", false],
+		[82, 530, 291, 301, 10.9, "MALVTH+SFTI1095", "Proposition 5.6 (The spectral potentials are local). For every k and every graph X of maximal", false],
+		[82, 123, 278, 288, 10.9, "MALVTH+SFTI1095", "degree 3,", true],
+		[137, 177, 257, 268, 10.9, "IBBQMF+CMR10", "pk(X) =", true],
+		[188, 204, 268, 272, 10.9, "SPBXXP+CMEX10", "∑", true, 272],
+		[180, 211, 245, 252, 8, "EZVZGK+CMMI8", "v∈V (X)", true],
+		[213, 475, 257, 268, 10.9, "MALVTH+SFTI1095", "νk(X, v), νk(X, v) := #{closed k-walks based at v},", true],
+		[82, 530, 225, 238, 10.9, "MALVTH+SFTI1095", "and νk(X, v) is determined by the ball of radius bk/2c around v and satisfies νk(X, v) ≤ 3k.", false],
+		[82, 530, 212, 225, 10.9, "MALVTH+SFTI1095", "Consequently, suppose X′ is obtained from X by replacing a patch ΠX by a patch ΠX′ with the", false],
+	], { hangs: /∑/ }), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text.slice(0, 50)]));
+	const display = units.find((u) => u.kind === "display");
+	assert.ok(display && display.text.includes("closed k-walks"), `the formula is whole: ${got}`);
+	assert.ok(units.some((u) => u.kind === "text" && u.text.startsWith("and νk")), `and the prose after it is its own: ${got}`);
+}
+
 console.log("all tests passed");

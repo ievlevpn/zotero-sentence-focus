@@ -131,6 +131,12 @@ being swallowed by the display above it. The exception is a piece that shares a
 baseline with a formula *and overlaps it*, starting before the piece beside it
 ends. Prose never stands in the middle of a formula like that.
 
+The rest of a formula's row can also come over as a line of its own —
+*ν_k(X, v) := #{closed k-walks based at v},* after *p_k(X) = ∑_{v∈V(X)}* —
+with words in it and beside the formula rather than inside it. It stands on the
+formula's baseline, just after the formula's row, well in from the margin:
+where no line of prose starts.
+
 **Prose crowded with symbols.** The opposite mistake: a line of running text
 can be mostly formula — *corresponds to max{F(x, u, Du, D²u), |Du| − g(x)} =
 0.* — and score as a display. What it does not do is stand apart. A line flush
@@ -319,6 +325,10 @@ A candidate that survives all of those still has to be followed by something
 that opens a sentence — a capital, a digit, an opening bracket or quote, or a
 formula. `Appendix A. We now conclude.` breaks; `J. R. Smith` does not.
 
+A line's highlight breaks only at a gulf between cells. A glyph that maps to
+no character — `≍` in *N_n ≍ n⁹* — leaves a hole wider than a word space in the
+middle of a sentence, and the highlight runs across it.
+
 **Sentences that are not in one piece.** Layout analysis ends a paragraph
 wherever the geometry jumps, including at the foot of a column and at every
 hanging indent — which is every list item whose continuation is set in. A
@@ -390,7 +400,11 @@ the rest of that item however it reads on its own — and it has to be the *next
 line, at ordinary leading. Both conditions are needed. A formula displayed
 under a list item is set in from the label exactly as the item's continuation
 is, and reads as a formula just as that does; what a continuation does not have
-is the space above it that sets a display apart from the text.
+is the space above it that sets a display apart from the text. And the item
+must have a hanging indent at all: a run-in numbered paragraph — *3. Gibbs
+measures with spectral potentials. In Section 5 we …* — opens with a label too,
+but its own second line is back at the margin, and what is set in under it is a
+displayed formula.
 
 **Tables.** A row reaches the plugin in one of two shapes. Sometimes it is one
 piece per cell, spread right across the measure, and read a cell at a time it
@@ -411,6 +425,11 @@ A **two-column** table gives each row a single wide gap, and one gap on its
 own is no evidence of anything — it is also the run up to an equation number.
 What makes those lines rows is that the gaps line up: three or more lines in a
 column, one under the next, whose second cells all start at the same place.
+
+A row whose cells sit closer than the wide-gap test allows is, on its own, a
+line of text with a gap in it; **among the rows of its table** it is one more.
+A line standing at the table's leading between two rows, or beside one with a
+cell starting where one of that row's cells starts, is a row too.
 
 Rows are counted in **cells**, not pieces. A cell too long for its column wraps,
 and then the row arrives as the wrapped cell standing apart from the rest of

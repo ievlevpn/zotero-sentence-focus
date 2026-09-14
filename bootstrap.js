@@ -901,6 +901,22 @@ function interleaved(line, lines) {
 			> 0.5 * Math.min(height, other.rect[3] - other.rect[1]));
 }
 
+// The rest of a formula's row can come over as a line of its own, carrying
+// words — "ν_k(X, v) := #{closed k-walks based at v}," after "p_k(X) = ∑". It
+// stands on the formula's baseline and starts just after a piece of it, well
+// in from the margin: where no line of prose ever starts.
+function carriesFormulaOn(line, rows, measure) {
+	const m = measure.get(line.col);
+	if (line.tabular || !m || line.rect[0] < m.left + 3 * line.size) return false;
+	const height = line.rect[3] - line.rect[1];
+	// Measured against the formula's row as a whole: the pieces just before the
+	// line — a summation sign, the limit under it — are each too thin or too
+	// low to share its band, but together they span it.
+	return rows.some((row) => row.col === line.col && row.rot === line.rot
+		&& row.rect[2] <= line.rect[0] + 0.5 * line.size && line.rect[0] - row.rect[2] < 1.5 * line.size
+		&& Math.min(row.rect[3], line.rect[3]) - Math.max(row.rect[1], line.rect[1]) > 0.7 * height);
+}
+
 // A line of running text can be crowded with symbols — "corresponds to
 // max{F(x, u, Du, D²u), |Du| − g(x)} = 0." — and score as a displayed formula.
 // What such a line does not do is stand apart. A display is set off: indented
@@ -1113,6 +1129,7 @@ function absorbDisplayRows(lines) {
 	// type is part of a formula even when it is spelled out in words, as
 	// "a(·) admissible from x" under an inf is. A sentence is never set in it.
 	const bodySize = median(lines.filter((line) => !line.furniture).map((line) => line.size)) || 10;
+	const measure = proseMeasure(lines);
 	for (let pass = 0; pass < lines.length; pass++) {
 		let absorbed = false;
 		for (const line of lines) {
@@ -1121,6 +1138,11 @@ function absorbDisplayRows(lines) {
 		// a piece must either carry no words — an operator name like `min`
 		// does not count as one — or be set in script type.
 		if (line.furniture || line.kind === "display") continue;
+		if (carriesFormulaOn(line, rows, measure)) {
+			line.kind = "display";
+			absorbed = true;
+			continue;
+		}
 		if (line.textWords > 0 && line.size >= 0.85 * bodySize && !interleaved(line, lines)) continue;
 			const height = line.rect[3] - line.rect[1];
 			const width = line.rect[2] - line.rect[0];
@@ -1240,6 +1262,30 @@ function markAlignedRows(lines) {
 		}
 		flush();
 		used.add(seed);
+	}
+}
+
+// A row whose cells happen to sit closer than the wide-gap test allows is, on
+// its own, a line of text with a gap or two in it. Among the rows of its table
+// it is plainly one more: it stands at the table's leading, and a cell of it
+// starts where a cell of the row next to it starts.
+function markRowsAmongRows(lines) {
+	const flow = lines.filter((line) => !line.furniture && !line.rot);
+	for (let pass = 0; pass < 3; pass++) {
+		let changed = false;
+		for (let i = 0; i < flow.length; i++) {
+			const line = flow[i];
+			if (line.tabular || line.kind !== "text" || line.cells.length < 2) continue;
+			const near = [flow[i - 1], flow[i + 1]].filter((other) => other && other.tabular
+				&& other.col === line.col && Math.abs(other.rect[1] - line.rect[1]) < 2.2 * line.size);
+			const aligned = near.some((other) => line.cells.slice(1).some((cell) =>
+				other.cells.slice(1).some((theirs) => Math.abs(theirs[0] - cell[0]) <= line.size)));
+			if (near.length === 2 || aligned) {
+				line.tabular = true;
+				changed = true;
+			}
+		}
+		if (!changed) break;
 	}
 }
 
@@ -1433,7 +1479,12 @@ function joinContinuations(blocks, typicalGap) {
 		// under one sits indented, at a gap the tall glyphs of the formula
 		// itself make look small. Being set about the middle of the column is
 		// what a display does and a continuation never does.
-		const indented = !!(next && head && tail && tight
+		// ...and the item must have a hanging indent at all. A run-in numbered
+		// paragraph — "3. Gibbs measures with spectral potentials. In Section 5
+		// we replace …" — opens with a label too, but its own next line is back
+		// at the margin, and what is set in under it is a displayed formula.
+		const hangs = a.lines.slice(1).every((l) => l.rect[0] > head.rect[0] + 0.5 * l.size);
+		const indented = !!(next && head && tail && tight && hangs
 			&& LIST_LABEL_RE.test(head.text)
 			&& !isCentred(next)
 			&& next.rect[3] < tail.rect[1]
@@ -1646,7 +1697,10 @@ function rectsForChars(chars, idx) {
 				if (!(between.marker || between.skip || /^\s*$/.test(between.c))) { skipped = false; break; }
 			}
 			const broke = prev.lineEnd || i <= run.last || !skipped || ch.rot !== prev.rot
-				|| gap > Math.max(1.2 * prev.size, 10) || gap < -prev.size;
+				// A gulf between cells breaks a line; less does not. A glyph
+				// that maps to no character at all — `≍` in "N_n ≍ n⁹" — leaves a
+				// hole wider than a word space in the middle of a sentence.
+				|| gap > 2.5 * Math.max(prev.size, ch.size, 4) || gap < -prev.size;
 			if (broke) flush();
 		}
 		if (!run) run = { rect: [ch.irect[0], ch.irect[1], ch.irect[2], ch.irect[3]], last: i };
@@ -1917,6 +1971,7 @@ function analysePage(rawChars, viewBox, opts = {}) {
 	absorbBraceRows(lines);
 	absorbDisplayRows(lines);
 	markAlignedRows(lines);
+	markRowsAmongRows(lines);
 	markTableRows(lines, typicalLineGap(lines));   // after absorbing, so a formula's row is already one
 	return { chars, lines, cols, fragments };
 }
