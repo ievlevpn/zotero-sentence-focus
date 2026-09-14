@@ -2647,4 +2647,37 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.ok(legend && !/ResNet-18|\b[246]0\b/.test(legend.text), `a legend entry is not a table row: ${got}`);
 }
 
+// A results table: a header in two lines, a heading across the table longer
+// than a short row, and group headings centred over the rows they head.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 9;
+	const row = (y, cells) => ({ pieces: cells.map(([x, text]) => ({ x, text })), y, size, para: true });
+	const units = segmentPage(layout([
+		{ text: "We compare with the published systems on the", x: 72, y: 812, size: 10 },
+		{ text: "leaderboard, and with our own single models too.", x: 72, y: 800, size: 10, para: true },
+		row(768, [[125, "System"], [210, "Dev"], [253, "Test"]]),
+		row(758, [[200, "EM"], [224, "F1"], [244, "EM"], [268, "F1"]]),
+		{ text: "Top Leaderboard Systems (Dec 10th, 2018)", x: 103, y: 743, size, para: true },
+		row(733, [[83, "Human"], [203, "-"], [226, "-"], [241, "82.3"], [264, "91.2"]]),
+		row(723, [[83, "#1 Ensemble - nlnet"], [203, "-"], [226, "-"], [241, "86.0"], [264, "91.7"]]),
+		{ text: "Published", x: 163, y: 698, size, para: true },
+		row(688, [[83, "BiDAF+ELMo (Single)"], [203, "-"], [219, "85.6"], [248, "-"], [264, "85.8"]]),
+		row(678, [[83, "R.M. Reader (Ensemble)"], [197, "81.2"], [219, "87.9"], [241, "82.3"], [264, "88.5"]]),
+		{ text: "Ours", x: 172, y: 662, size, para: true },
+		row(652, [[83, "BERTBASE (Single)"], [197, "80.8"], [219, "88.5"], [248, "-"], [270, "-"]]),
+		row(642, [[83, "BERTLARGE (Single)"], [197, "84.1"], [219, "90.9"], [248, "-"], [270, "-"]]),
+		{ text: "Table 2: SQuAD 1.1 results. The BERT ensemble", x: 72, y: 615, size: 10 },
+		{ text: "is 7x systems which use different pre-training.", x: 72, y: 603, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	const header = units.find((u) => u.text.includes("System"));
+	assert.ok(header && header.text.includes("EM") && !header.text.includes("Top"), `the header's two lines are one row: ${got}`);
+	assert.strictEqual(header.kind, "text", "and it is no formula");
+	for (const heading of ["Top Leaderboard", "Published", "Ours"]) {
+		const unit = units.find((u) => u.text.includes(heading));
+		assert.ok(unit && !/\d\d\.\d/.test(unit.text), `"${heading}" heads its rows, a row of its own: ${got}`);
+	}
+}
+
 console.log("all tests passed");

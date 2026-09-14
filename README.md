@@ -479,6 +479,11 @@ than half the columns with text, crossing no gutter — belong to the nearer row
 beside them. A row that names itself in the first column and gives a value
 beside it (*Warmup Ratio 0.1*) is a row however sparse, and so is a row of
 figures that fills in only the columns that changed (Transformer's rows (A)–(D)).
+A group's heading — centred over its rows (*Published*, *Ours*), or with its
+rows set in under it (*Fine-tuning approach*) — is a row of its own, and a
+heading running across the table does not end it. A header in two lines, a
+heading spanning columns with the columns' own headings set tight under it
+(*Dev* over *EM F1*), is one row.
 
 A **stacked cell** — a bracketed block of three layers beside a block of two,
 with the row's label level with neither — breaks into visual rows that belong

@@ -1604,11 +1604,17 @@ function detectTables(lines, cols) {
 		// Short rows between rows of cells — a cell's wrapped line, a stacked
 		// cell's lines set half a line off its neighbours' — belong to the
 		// table if a row of cells follows close under them.
+		// So does a group's heading across the table — "Top Leaderboard Systems
+		// (Dec 10th, 2018)" — however long, set within the rows either side.
+		const within = (row, a, b) => !prose(row) && !caption(row) && row.lines.length === 1
+			&& row.rect[0] >= Math.min(a.rect[0], b.rect[0]) - size && row.rect[2] <= Math.max(a.rect[2], b.rect[2]) + size;
 		const leadsToRow = (k) => {
 			for (let m = k; m < Math.min(rows.length, k + 6); m++) {
 				if (m > k && (rows[m - 1].rect[1] - rows[m].rect[3] > 1.6 * size || !sameSize(rows[k].size, rows[m].size))) return false;
-				if (m > k && multi(rows[m])) return true;
-				if (!short(rows[m])) return false;
+				if (m > k && multi(rows[m])) {
+					return rows.slice(k, m).every((r) => short(r) || (k > 0 && within(r, rows[k - 1], rows[m])));
+				}
+				if (multi(rows[m])) return false;
 			}
 			return false;
 		};
@@ -1793,7 +1799,15 @@ function tableOf(run, colWidth, size, col) {
 	// A row that names itself in the first column and gives a value beside it
 	// — "Warmup Ratio 0.1" under "Optimizer AdamW" — is a row, however sparse.
 	const labelled = (r) => occupied(r) >= 2 && r.cells.some((c) => columnOf((c[0] + c[1]) / 2) === 0);
-	const partial = run.map((r) => occupied(r) <= columns / 2 && !r.cells.some(spans) && textual(r) && !labelled(r));
+	// Nor is a group's heading, which heads the rows under it rather than
+	// carrying on one: set in the middle of the table — "Published", "Ours" —
+	// or with the rows under it set in from it — "Fine-tuning approach".
+	const centre = (left + right) / 2;
+	const heading = (r, k) => r.lines.length === 1 && occupied(r) === 1
+		&& (Math.abs((r.rect[0] + r.rect[2]) / 2 - centre) <= size
+			|| (k + 1 < run.length && run[k + 1].cells[0][0] >= r.rect[0] + 0.5 * size
+				&& columnOf(run[k + 1].cells[0][0]) === columnOf(r.rect[0])));
+	const partial = run.map((r, k) => occupied(r) <= columns / 2 && !r.cells.some(spans) && textual(r) && !labelled(r) && !heading(r, k));
 	// Rows of several cells need to agree with the gutters found from them.
 	if (multiRows.filter((r) => !r.cells.some(spans)).length < 2) return null;
 
@@ -1851,6 +1865,16 @@ function tableOf(run, colWidth, size, col) {
 			}
 		}
 		s = e + 1;
+	}
+	// A header set in two lines — "Dev" and "Test" over "EM F1 EM F1" — is
+	// one row: a heading spanning columns, and the headings of those columns
+	// set tight under it, words rather than figures.
+	const allWords = (r) => r.lines.every((l) => /\p{L}{2,}/u.test(l.text) && !/(?:^|\s)[\d.,±%()+\-−]*\d[\d.,±%()+\-−]*(?=\s|$)/u.test(l.text));
+	const under = (r, top) => top.cells.some((t) => r.cells.filter((c) => Math.abs((c[0] + c[1]) / 2 - (t[0] + t[1]) / 2) <= (t[1] - t[0]) / 2 + size).length >= 2);
+	for (let k = 1; k < run.length && allWords(run[k - 1]) && allWords(run[k])
+		&& run[k - 1].rect[1] - run[k].rect[3] <= 0.5 * size && under(run[k], run[k - 1]); k++) {
+		const a = find(k), b = find(k - 1);
+		if (a !== b) owner[a] = b;
 	}
 	const byRoot = new Map();
 	run.forEach((r, k) => {
