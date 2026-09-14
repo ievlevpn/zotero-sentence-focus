@@ -2578,4 +2578,73 @@ assert.deepStrictEqual(texts([
 assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sharp.", para: true }]),
 	["[GG24] for a general criterion.", "It is sharp."]);
 
+// --- stacked cells, lists of settings, and a plot's labels -------------------
+
+// A cell of several lines in brackets, beside one of a different number of
+// lines and a row label level with neither: the lines fall into rows of their
+// own, but the page hands the cell over line by line down its column and then
+// goes back up for the next one. The group is one row.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 8;
+	const at = (x, y, text) => ({ text, x, y, size, para: true });
+	const group = (y, label) => [
+		at(85, y, label),
+		at(200, y + 5, "3x3, 64"), at(200, y - 5, "3x3, 64"),
+		at(330, y + 10, "1x1, 64"), at(330, y, "3x3, 64"), at(330, y - 10, "1x1, 256"),
+	];
+	const units = segmentPage(layout([
+		{ pieces: [{ x: 85, text: "layer" }, { x: 200, text: "18-layer" }, { x: 330, text: "50-layer" }], y: 720, size, para: true },
+		{ pieces: [{ x: 85, text: "conv1" }, { x: 200, text: "7x7, 64" }, { x: 330, text: "7x7, 64" }], y: 705, size, para: true },
+		...group(680, "conv2"),
+		...group(645, "conv3"),
+		{ text: "Table 1. Architectures for ImageNet.", x: 85, y: 615, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	for (const [label, other] of [["conv2", "conv3"], ["conv3", "conv2"]]) {
+		const row = units.filter((u) => u.text.includes(label));
+		assert.strictEqual(row.length, 1, `"${label}" is in one row: ${got}`);
+		assert.strictEqual((row[0].text.match(/\d+x\d+/g) || []).length, 5, `with all five of its lines: ${got}`);
+		assert.ok(!row[0].text.includes(other) && !row[0].text.includes("conv1"), `and none of the others: ${got}`);
+	}
+}
+
+// A list of settings written out column by column — the names, then the
+// values — comes over the same way, but its lines pair off row by row.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 10;
+	const at = (x, y, text) => ({ text, x, y, size, para: true });
+	const units = segmentPage(layout([
+		{ pieces: [{ x: 85, text: "Setting" }, { x: 300, text: "MNLI" }, { x: 400, text: "SST-2" }], y: 720, size, para: true },
+		at(85, 700, "Optimizer"), at(85, 686, "Warmup Ratio"), at(85, 672, "LR Schedule"),
+		at(330, 700, "AdamW"), at(340, 686, "0.1"), at(335, 672, "Linear"),
+		{ pieces: [{ x: 85, text: "Batch Size" }, { x: 300, text: "16" }, { x: 400, text: "32" }], y: 652, size, para: true },
+		{ pieces: [{ x: 85, text: "Epochs" }, { x: 300, text: "30" }, { x: 400, text: "60" }], y: 638, size, para: true },
+		{ text: "Table 2. The hyperparameters.", x: 85, y: 610, size, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	for (const [name, value] of [["Optimizer", "AdamW"], ["Warmup Ratio", "0.1"], ["LR Schedule", "Linear"]]) {
+		const row = units.find((u) => u.text.includes(name));
+		assert.ok(row && row.text.includes(value), `"${name}" reads with "${value}": ${got}`);
+		assert.ok(["Optimizer", "Warmup Ratio", "LR Schedule"].every((n) => n === name || !row.text.includes(n)), `and is a row of its own: ${got}`);
+	}
+}
+
+// A plot's tick labels and legend line up in rows and columns as well as a
+// table's cells do. The caption under them says what they are.
+{
+	const PAGE = [0, 0, 595, 842];
+	const at = (x, y, text, size = 7) => ({ text, x, y, size, para: true });
+	const plot = (dx) => [at(80 + dx, 700, "60"), at(80 + dx, 680, "40"), at(200 + dx, 684, "34-layer"),
+		at(110 + dx, 668, dx ? "ResNet-18" : "plain-18"), at(80 + dx, 660, "20"), at(200 + dx, 664, "18-layer")];
+	const lines = [...plot(0), ...plot(250),
+		at(90, 648, "0 10 20 30 40"), at(340, 648, "0 10 20 30 40"),
+		{ text: "Figure 4. Training on ImageNet. Thin curves denote training error.", x: 72, y: 625, size: 10, para: true }];
+	const units = segmentPage(layout(lines, PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	const legend = units.find((u) => u.text.includes("plain-18"));
+	assert.ok(legend && !/ResNet-18|\b[246]0\b/.test(legend.text), `a legend entry is not a table row: ${got}`);
+}
+
 console.log("all tests passed");

@@ -476,12 +476,24 @@ function makeLine(chars, from, to) {
 	// the layout sees one baseline it gives one line, cells and all. Several
 	// such gaps is a row; one of them is the run up to an equation number, and
 	// justified prose never stretches a word space this far.
-	let wideGaps = 0;
+	let wideGaps = 0, lastGapAt = -1;
+	// Cells at two scales. A gulf of two and a half ems is a column gap nobody
+	// could take for anything else; a table of figures sets its columns much
+	// closer — about an em — which is still three word spaces.
+	const tightCells = [[chars[from].rect[0], chars[from].rect[2]]];
+	for (let i = from + 1; i <= to; i++) {
+		const r = chars[i].rect;
+		if (/\s/.test(chars[i].c)) continue;
+		const cell = tightCells[tightCells.length - 1];
+		if (r[0] - cell[1] > 0.8 * size) tightCells.push([r[0], r[2]]);
+		else { cell[0] = Math.min(cell[0], r[0]); cell[1] = Math.max(cell[1], r[2]); }
+	}
 	const cells = [[chars[from].rect[0], chars[from].rect[2]]];
 	for (let i = from + 1; i <= to; i++) {
 		const r = chars[i].rect;
 		if (r[0] - chars[i - 1].rect[2] > 2.5 * size) {
 			wideGaps++;
+			lastGapAt = i;
 			cells.push([r[0], r[2]]);
 		} else {
 			const cell = cells[cells.length - 1];
@@ -495,7 +507,14 @@ function makeLine(chars, from, to) {
 	// a bare number after a wide gap is a page number (an equation number is
 	// bracketed, and is dealt with elsewhere).
 	const leader = /(?:\.\s*){4,}/.test(text);
-	const pageNumber = wideGaps >= 1 && /(?:^|\s)\d{1,4}\s*$/.test(text);
+	let lastCell = "";
+	if (lastGapAt >= 0) for (let i = lastGapAt; i <= to; i++) lastCell += chars[i].c;
+	// The number stands alone in its cell: "the number, 16" ends a table row.
+	// ...and what comes before it is a title, words rather than figures: "base
+	// 6 512 2048 8 … 65" ends a row of a table.
+	const title = text.slice(0, Math.max(0, text.length - lastCell.length));
+	const pageNumber = wideGaps >= 1 && /^\s*\d{1,4}\s*$/.test(lastCell)
+		&& (title.match(/\p{L}/gu) || []).length >= 0.5 * title.replace(/\s/g, "").length;
 
 	// The top of the tallest glyph that hangs from its baseline, and where the
 	// rest of the line stands — see displayBand for what they are needed for.
@@ -532,10 +551,12 @@ function makeLine(chars, from, to) {
 	}
 
 	const line = {
-		from, to, text, rect, size, baseline, wideGaps, cells, hangTop, hangingOpeners, itemStart,
+		from, to, text, rect, size, baseline, wideGaps, cells, tightCells, hangTop, hangingOpeners, itemStart,
 		standingBaseline: standing.length ? median(standing) : null,
 		standingGlyphs: standing.length,
 		tabular: wideGaps >= 2 || leader || pageNumber,
+		// A contents entry is a title and a page number: two cells, not three.
+		contents: leader || (pageNumber && wideGaps === 1),
 		glyphKinds,
 		mathFrac: mathCount / glyphs,
 		variableFrac,
@@ -1394,6 +1415,7 @@ function absorbBraceRows(lines) {
 	for (const span of spans) {
 		if (span.top - span.bottom < 2 * span.size) continue;
 		const beside = lines.filter((line) => !line.furniture && !span.members.has(line) && !line.flow && !line.inline
+			&& line.tableRow === undefined
 			&& line.col === span.col && line.rot === span.rot && !line.tabular
 			// A branch is never a full line of text.
 			&& !(line.col && line.rect[2] - line.rect[0] > 0.8 * (line.col.right - line.col.left))
@@ -1431,7 +1453,7 @@ function absorbDisplayRows(lines) {
 		// for a fraction's numerator and wrong for the tail of a sentence. So
 		// a piece must either carry no words — an operator name like `min`
 		// does not count as one — or be set in script type.
-		if (line.furniture || line.kind === "display" || line.flow || line.inline) continue;
+		if (line.furniture || line.kind === "display" || line.flow || line.inline || line.tableRow !== undefined) continue;
 		if (line.flow === false) {
 			// Off the flow, words are no evidence of prose: only where it stands.
 		} else if (carriesFormulaOn(line, rows, measure)) {
@@ -1484,149 +1506,359 @@ function continuesInitials(before, after) {
 	return /(?:^|[\s(])\p{Lu}\.\s*$/u.test(before) && /^\s*\p{Lu}\.\s+\p{Lu}/u.test(after);
 }
 
-// A table row arrives as one piece per cell, spread right across the measure.
-// Read a cell at a time it says nothing — "theorem" on its own, then "O(n)
-// tests" — so a row of cells is treated as one line and highlighted as one.
-// Where the layout sees one baseline it hands over cells and all as one line;
-// where it does not, the row comes in pieces, a cell or a run of cells each. So
-// a row is counted in cells, not pieces: a first cell standing apart from the
-// rest of its row is two pieces, and three cells.
+// --- tables ---------------------------------------------------------------------
 //
-// A row of displayed maths is laid out the same way and must not be caught by
-// this. What separates them is words: a table's cells carry them ("hypothesis",
-// "cost/step"), a formula's pieces do not, so a row needs two pieces with a
-// real word in them before it counts as a table.
-function markTableRows(lines, typicalGap) {
-	const rows = [];
-	for (const line of lines) {
-		if (line.furniture) continue;
-		const height = line.rect[3] - line.rect[1];
-		let row = null;
-		for (const candidate of rows) {
-			if (candidate.col !== line.col) continue;
-			if (candidate.rot !== line.rot) continue;
-			const overlap = Math.min(candidate.rect[3], line.rect[3]) - Math.max(candidate.rect[1], line.rect[1]);
-			// Measured against the taller of the two, so that a stamp printed
-			// down the margin — as tall as the page and overlapping the band of
-			// nearly every line on it — gathers nothing.
-			if (overlap > 0.5 * Math.max(height, candidate.rect[3] - candidate.rect[1])) { row = candidate; break; }
-		}
-		if (!row) { rows.push({ col: line.col, rot: line.rot, rect: line.rect.slice(), members: [line] }); continue; }
-		row.rect[1] = Math.min(row.rect[1], line.rect[1]);
-		row.rect[3] = Math.max(row.rect[3], line.rect[3]);
-		row.members.push(line);
-	}
-	const alone = new Set(rows.filter((row) => row.members.length === 1).map((row) => row.members[0]));
-	let id = 0;
-	for (const row of rows) {
-		const cells = row.members.reduce((n, m) => n + m.cells.length, 0);
-		// Words in a cell are a cell's; words in a piece of formula — the "dydr"
-		// after an integral — are not what makes a table.
-		const isRow = row.members.length >= 2 && cells >= 3
-			&& row.members.filter((m) => m.textWords >= 1 && m.formulaFrac < 0.5).length >= 2;
-		// A row the layout kept on one line is already known for what it is;
-		// it is looked at here only for cells wrapped onto the lines below it.
-		const oneLine = row.members.length === 1 && row.members[0].tabular && row.members[0].kind === "text"
-			&& cells >= 2;
-		if (!isRow && !oneLine) continue;
-		let rowId = null;
-		const claim = (line) => {
-			if (rowId === null) rowId = ++id;
-			line.kind = "text";     // a row of cells is read, not set apart
-			line.tableRow = rowId;
-		};
-		if (isRow) for (const member of row.members) claim(member);
-		attachWrappedCells(row, lines, alone, typicalGap, claim);
-	}
-}
+// A table is found the way a reader finds one: rows of cells, one under the
+// next, whose gaps line up into columns. Within each column of the page:
+//
+// - lines standing side by side are a visual row, and a row is split into cells
+//   at gaps of about an em — the space a table leaves between its columns, and
+//   three word spaces;
+// - a table is a run of rows of several cells in one size of type, one after
+//   another at a table's spacing, allowing short rows between them —
+//   "Published", "(A)", the lines of a stacked cell — and stopping at a line
+//   of prose, at a caption, or at a gap wider than a row's;
+// - text whose nearest caption is a figure's — a plot's ticks and legend, a
+//   diagram's boxes — is no table;
+// - its columns are the gutters that most of those rows leave white; a run
+//   with none, or of fewer than three rows, or whose rows are formulas — a
+//   matrix, an aligned derivation — is no table;
+// - a visual row filling fewer than half the columns with text, none of its
+//   cells running across a gutter and not naming itself in the first column,
+//   belongs to the nearer of the rows either side of it: a cell's wrapped
+//   line, a header's second line. A row of one cell spanning the table — a
+//   group's heading — is a row of its own;
+// - the lines of a cell stacked beside cells of a different number of lines,
+//   which the page hands over down the column, are one row;
+// - each row is read as one thing and highlighted as a band across the table.
+const sameSize = (a, b) => Math.max(a, b) <= 1.35 * Math.min(a, b);
 
-// Two columns give a row a single wide gap, and on a line of its own one gap is
-// no evidence of anything — it is also the run up to an equation number. A
-// table is what makes it one: the gaps line up, every second cell starting at
-// the same place, row after row. Three lines in a column agreeing on it is a
-// table; a formula's condition or a number at the margin does not repeat so.
-function markAlignedRows(lines) {
-	const candidates = lines.filter((line) => !line.furniture && !line.tabular && line.kind === "text"
-		&& line.cells.length === 2 && line.eqNumFrom < 0 && line.eqNumTo < 0 && line.textWords >= 1);
-	const used = new Set();
-	for (const seed of candidates) {
-		if (used.has(seed)) continue;
-		const group = candidates.filter((line) => !used.has(line) && line.col === seed.col && line.rot === seed.rot
-			&& Math.abs(line.cells[1][0] - seed.cells[1][0]) <= seed.size);
-		// Rows follow one another down the page; the same indent a page apart
-		// is a coincidence, not a column.
-		group.sort((p, q) => q.rect[1] - p.rect[1]);
-		let run = [group[0]];
-		const flush = () => {
-			if (run.length >= 3) for (const line of run) { line.tabular = true; used.add(line); }
-		};
-		for (let i = 1; i < group.length; i++) {
-			if (run[run.length - 1].rect[1] - group[i].rect[3] <= 4 * seed.size) run.push(group[i]);
-			else { flush(); run = [group[i]]; }
-		}
-		flush();
-		used.add(seed);
-	}
-}
+function detectTables(lines, cols) {
+	let nextId = 1, nextTable = 1;
+	for (const col of cols) {
+		// Contents entries line up like a table's rows, and are read by rules
+		// of their own (see markContentsEntries).
+		// A row's label set apart at the left — "(A)" beside the rows it heads —
+		// reads to the page's other rules as an equation's number, and is kept.
+		const label = (l) => EQ_LABEL_RE.test(l.text.trim());
+		const own = lines.filter((l) => l.col === col && (!l.furniture || label(l)) && !l.rot && !l.blank && !l.contents);
+		if (own.length < 3) continue;
+		const colWidth = (col.right - col.left) || 1;
+		const size = median(own.map((l) => l.size)) || 10;
 
-// A row whose cells happen to sit closer than the wide-gap test allows is, on
-// its own, a line of text with a gap or two in it. Among the rows of its table
-// it is plainly one more: it stands at the table's leading, and a cell of it
-// starts where a cell of the row next to it starts.
-function markRowsAmongRows(lines) {
-	const flow = lines.filter((line) => !line.furniture && !line.rot);
-	for (let pass = 0; pass < 3; pass++) {
-		let changed = false;
-		for (let i = 0; i < flow.length; i++) {
-			const line = flow[i];
-			if (line.tabular || line.kind !== "text" || line.cells.length < 2) continue;
-			const near = [flow[i - 1], flow[i + 1]].filter((other) => other && other.tabular
-				&& other.col === line.col && Math.abs(other.rect[1] - line.rect[1]) < 2.2 * line.size);
-			const aligned = near.some((other) => line.cells.slice(1).some((cell) =>
-				other.cells.slice(1).some((theirs) => Math.abs(theirs[0] - cell[0]) <= line.size)));
-			if (near.length === 2 || aligned) {
-				line.tabular = true;
-				changed = true;
+		const rows = [];
+		for (const line of [...own].sort((a, b) => b.rect[3] - a.rect[3])) {
+			const h = line.rect[3] - line.rect[1];
+			// A table is set in one size of type; a figure's labels beside a
+			// column of prose are not in a row with its lines.
+			const row = rows.find((r) => Math.min(r.rect[3], line.rect[3]) - Math.max(r.rect[1], line.rect[1]) > 0.5 * Math.min(h, r.rect[3] - r.rect[1])
+				&& sameSize(r.size, line.size));
+			if (row) {
+				row.lines.push(line);
+				row.rect = [Math.min(row.rect[0], line.rect[0]), Math.min(row.rect[1], line.rect[1]), Math.max(row.rect[2], line.rect[2]), Math.max(row.rect[3], line.rect[3])];
+			} else {
+				rows.push({ lines: [line], rect: line.rect.slice(), size: line.size });
 			}
 		}
-		if (!changed) break;
+		rows.sort((a, b) => b.rect[3] - a.rect[3]);
+		for (const row of rows) {
+			const cells = row.lines.flatMap((l) => l.tightCells.map((c) => c.slice())).sort((a, b) => a[0] - b[0]);
+			const merged = [];
+			for (const c of cells) {
+				const last = merged[merged.length - 1];
+				if (last && c[0] - last[1] <= 0.8 * size) last[1] = Math.max(last[1], c[1]);
+				else merged.push(c);
+			}
+			row.cells = merged;
+		}
+
+		const caption = (row) => row.lines.some((l) => /^\s*(?:Table|TABLE|Tab\.|Figure|FIGURE|Fig\.)\s*\d/.test(l.text));
+		// A line of prose running the measure: its gaps are word spaces, which
+		// justification stretches to an em at most — not a gulf between cells.
+		const widestGap = (l) => Math.max(0, ...l.tightCells.slice(1).map((c, k) => c[0] - l.tightCells[k][1]));
+		// So are a paragraph's lines when a figure stands beside them, and the
+		// figure's labels fall level with them: long lines of words, set one
+		// under another on a common margin, running from the column's edge —
+		// and words, where a table's rows set tight are mostly figures.
+		// (The layout can join a label and the prose level with it into one
+		// line, so it is the line's stretches of words that are compared.)
+		const paragraph = new Set();
+		const stretches = [];
+		for (const l of own) {
+			const glyphs = l.text.replace(/\s/g, "");
+			if ((glyphs.match(/\p{L}/gu) || []).length < 0.6 * glyphs.length) continue;
+			for (const c of l.tightCells) {
+				if (c[1] - c[0] >= 15 * l.size && (c[0] <= col.left + l.size || c[1] >= col.right - l.size)) stretches.push({ l, c });
+			}
+		}
+		for (const s of stretches) {
+			const beside = (t) => t.l !== s.l && Math.abs(t.c[0] - s.c[0]) <= s.l.size
+				&& Math.abs(t.l.rect[1] - s.l.rect[1]) <= 1.8 * Math.max(s.l.size, t.l.size);
+			if (stretches.some(beside)) paragraph.add(s.l);
+		}
+		const prose = (row) => row.lines.some((l) => paragraph.has(l)
+			|| (l.flow && l.rect[2] - l.rect[0] >= 0.8 * colWidth && widestGap(l) < 1.5 * size));
+		const multi = (row) => row.cells.length >= 2 && !prose(row) && !caption(row);
+		const short = (row) => row.rect[2] - row.rect[0] < 0.6 * colWidth && !prose(row) && !caption(row);
+
+		// Short rows between rows of cells — a cell's wrapped line, a stacked
+		// cell's lines set half a line off its neighbours' — belong to the
+		// table if a row of cells follows close under them.
+		const leadsToRow = (k) => {
+			for (let m = k; m < Math.min(rows.length, k + 6); m++) {
+				if (m > k && (rows[m - 1].rect[1] - rows[m].rect[3] > 1.6 * size || !sameSize(rows[k].size, rows[m].size))) return false;
+				if (m > k && multi(rows[m])) return true;
+				if (!short(rows[m])) return false;
+			}
+			return false;
+		};
+		let i = 0;
+		while (i < rows.length) {
+			if (!multi(rows[i])) { i++; continue; }
+			const run = [rows[i]];
+			let j = i;
+			while (j + 1 < rows.length) {
+				const next = rows[j + 1], prev = rows[j];
+				if (prev.rect[1] - next.rect[3] > 1.6 * size || !sameSize(run[0].size, next.size)) break;
+				if (multi(next) || leadsToRow(j + 1)) {
+					run.push(next);
+					j++;
+				} else {
+					break;
+				}
+			}
+			// A last row's cell can wrap too, onto a line set tight under it.
+			while (j + 1 < rows.length && short(rows[j + 1]) && sameSize(run[0].size, rows[j + 1].size)
+				&& rows[j].rect[1] - rows[j + 1].rect[3] <= 0.6 * size) {
+				run.push(rows[j + 1]);
+				j++;
+			}
+			i = j + 1;
+			const table = tableOf(run, colWidth, size, col);
+			if (!table || figureText(run, lines, size)) continue;
+			const tableId = nextTable++;
+			for (const group of table.rows) {
+				const id = nextId++;
+				const top = Math.max(...group.map((r) => r.rect[3])), bottom = Math.min(...group.map((r) => r.rect[1]));
+				for (const r of group) {
+					for (const line of r.lines) {
+						line.tableRow = id;
+						line.tableId = tableId;
+						// A cell's label is read with its row, not dropped as a number.
+						line.furniture = false;
+						line.eqNumFrom = -1;
+						line.eqNumTo = -1;
+						line.tabular = true;
+						line.kind = "text";
+						line.flow = false;
+						line.inline = false;
+						line.tableBox = [table.left, bottom, table.right, top];
+						line.tableColumn = table.columnOf(line.rect[0]);
+					}
+				}
+			}
+		}
 	}
+	// Read a table's rows together and in order, and a row's cells together,
+	// whatever order the layout hands them over in: a table read down its
+	// columns would otherwise scatter each row, and a line the layout slips in
+	// between two cells would cut a row in two. The table takes the place of
+	// its first line.
+	const byTable = new Map();
+	for (const l of lines) {
+		if (l.tableId === undefined) continue;
+		if (!byTable.has(l.tableId)) byTable.set(l.tableId, []);
+		byTable.get(l.tableId).push(l);
+	}
+	if (!byTable.size) return;
+	// Within a row, column by column across the table, and a column's lines
+	// downwards: a name, then the affiliation and address set under it.
+	for (const members of byTable.values()) {
+		members.sort((a, b) => (a.tableRow - b.tableRow) || (a.tableColumn - b.tableColumn) || (b.rect[3] - a.rect[3]) || (a.rect[0] - b.rect[0]));
+	}
+	const ordered = [];
+	for (const l of lines) {
+		if (l.tableId === undefined) { ordered.push(l); continue; }
+		const members = byTable.get(l.tableId);
+		if (members) { ordered.push(...members); byTable.delete(l.tableId); }
+	}
+	lines.splice(0, lines.length, ...ordered);
 }
 
-// A cell too long for its column wraps, and its second line stands alone under
-// the row, set in under its own cell and nowhere near the next one. Belonging
-// to the row, it is read and highlighted with it — otherwise it reads as a
-// scrap of a sentence and draws a highlight of its own under half a row.
-function attachWrappedCells(row, lines, alone, typicalGap, claim) {
-	const cells = [];
-	for (const member of row.members) {
-		for (const cell of member.cells) cells.push({ left: cell[0], right: cell[1], line: member });
-	}
-	cells.sort((p, q) => p.left - q.left);
-	let bottom = row.rect[1];
-	for (;;) {
-		let found = null;
-		for (const line of lines) {
-			if (!alone.has(line) || line.tableRow !== undefined || line.tabular || line.kind !== "text") continue;
-			if (line.col !== row.col || line.rot !== row.rot) continue;
-			if (line.rect[3] > bottom + 0.3 * line.size || bottom - line.rect[3] > typicalGap + 0.6 * line.size) continue;
-			const k = cells.findIndex((cell, j) => line.rect[0] >= cell.left - line.size
-				&& (j + 1 === cells.length || line.rect[2] < cells[j + 1].left - 0.5 * line.size));
-			if (k < 0 || line.rect[0] > (cells[k + 1] ? cells[k + 1].left : Infinity)) continue;
-			// A caption or a paragraph set straight under the table opens with a
-			// capital after a cell that was finished; a wrapped cell carries on.
-			if (/^\s*(?:Table|Tab\.|Figure|Fig\.)\s/.test(line.text)) continue;
-			if (/^\s*\p{Lu}/u.test(line.text) && /[.!?:]\s*$/.test(cells[k].line.text)) continue;
-			found = { line, k };
-			break;
+// A plot's tick labels and legend, a diagram's boxes, fall into rows and
+// columns too. What a block of text is, its caption says: the caption reached
+// first going up or down from it, past the figure's other labels but not past
+// a line of prose. A figure's text is not a table.
+const CAPTION_RE = /^\s*(?:(Table|TABLE|Tab\.)|Figure|FIGURE|Fig\.)\s*[\dA-Z]/;
+function figureText(run, lines, size) {
+	const left = Math.min(...run.map((r) => r.rect[0])), right = Math.max(...run.map((r) => r.rect[2]));
+	const inRun = new Set(run.flatMap((r) => r.lines));
+	const near = lines.filter((l) => !inRun.has(l) && !l.blank && l.rect[0] < right && l.rect[2] > left);
+	const words = (l) => l.textWords >= 4 && Math.max(0, ...l.tightCells.slice(1).map((c, k) => c[0] - l.tightCells[k][1])) < 1.5 * l.size;
+	let best = null, bestReach = Infinity;
+	for (const down of [true, false]) {
+		let edge = down ? run[run.length - 1].rect[1] : run[0].rect[3];
+		const start = edge, seen = new Set();
+		for (;;) {
+			const next = near.filter((l) => !seen.has(l) && (down
+				? l.rect[3] <= edge + 0.5 * size && edge - l.rect[3] <= 4 * Math.max(size, l.size)
+				: l.rect[1] >= edge - 0.5 * size && l.rect[1] - edge <= 4 * Math.max(size, l.size)))
+				.sort((p, q) => (down ? q.rect[3] - p.rect[3] : p.rect[1] - q.rect[1]));
+			if (!next.length) break;
+			const line = next[0];
+			const m = CAPTION_RE.exec(line.text);
+			if (m) {
+				const reach = Math.abs((down ? line.rect[3] : line.rect[1]) - start);
+				if (reach < bestReach) { bestReach = reach; best = m; }
+				break;
+			}
+			if (words(line)) break;
+			seen.add(line);
+			edge = down ? Math.min(edge, line.rect[1]) : Math.max(edge, line.rect[3]);
 		}
-		if (!found) return;
-		// A row kept on one line becomes a row of lines only now it has one.
-		for (const member of row.members) if (member.tableRow === undefined) claim(member);
-		claim(found.line);
-		cells[found.k].line = found.line;
-		bottom = Math.min(bottom, found.line.rect[1]);
 	}
+	return !!best && !best[1];
+}
+
+function tableOf(run, colWidth, size, col) {
+	const multiRows = run.filter((r) => r.cells.length >= 2);
+	if (run.length < 3 || multiRows.length < 2) return null;
+	// Rows of words and figures, not formula: at least two rows with two cells
+	// of words or figures in them — figures even in a line read as formula,
+	// "3×3, 64", but not a big operator's glyph that happens to map to "1". (A
+	// formula's pieces set beside a line of prose — an integral sign and its
+	// limits next to "it follows that" — make rows of cells too.)
+	const figures = (l) => l.hangTop === null && (l.text.match(/\d/g) || []).length >= 0.4 * l.text.replace(/\s/g, "").length;
+	const runningProse = (l) => l.flow && l.textWords >= 3 && l.tightCells.length <= 1;
+	const wordCells = (r) => r.lines.reduce((n, l) => n
+		+ (!runningProse(l) && (l.kind !== "display" || figures(l)) ? l.tightCells.length : 0), 0);
+	if (multiRows.filter((r) => wordCells(r) >= 2).length < 2) return null;
+	// A list set with hanging labels — a bibliography's keys, numbered notes —
+	// has a column of labels and a column of running text, which runs to the
+	// margin row after row. A table's cells stop short of it.
+	const running = multiRows.filter((r) => r.rect[2] >= col.right - size
+		&& r.lines.some((l) => l.textWords >= 4)).length;
+	if (running >= 0.6 * multiRows.length) return null;
+	const left = Math.min(...run.map((r) => r.rect[0])), right = Math.max(...run.map((r) => r.rect[2]));
+	if (right - left < 0.4 * colWidth) return null;
+	// A matrix or an aligned derivation is laid out the same way; its rows are
+	// formulas, a table's are words and figures.
+	let glyphs = 0, formula = 0;
+	for (const r of run) for (const l of r.lines) {
+		const n = l.to - l.from + 1;
+		glyphs += n;
+		formula += n * l.formulaFrac;
+	}
+	if (formula > 0.35 * glyphs) return null;
+	// ...and whose lines were already read as a formula. (An integral sign can
+	// arrive as the digit "1", which no measure of formula glyphs counts.) A
+	// table of figures with a ± in its cells is read as formula line by line,
+	// but its cells are figures, not formula.
+	let displayed = 0;
+	for (const r of run) for (const l of r.lines) if (l.kind === "display") displayed += l.to - l.from + 1;
+	if (displayed > 0.5 * glyphs && formula > 0.15 * glyphs) return null;
+	// Gutters: stretches that nearly all rows of several cells leave white.
+	const width = Math.ceil(right - left) + 1;
+	const count = new Uint16Array(width);
+	for (const r of multiRows) {
+		for (const c of r.cells) {
+			for (let x = Math.max(0, Math.floor(c[0] - left)); x <= Math.min(width - 1, Math.ceil(c[1] - left)); x++) count[x]++;
+		}
+	}
+	const allowed = Math.ceil(0.2 * multiRows.length);
+	const gutters = [];
+	let start = -1;
+	for (let x = 0; x < width; x++) {
+		const white = count[x] <= allowed;
+		if (white && start < 0) start = x;
+		if ((!white || x === width - 1) && start >= 0) {
+			if (start > 0 && !white && x - start >= 0.6 * size) gutters.push([left + start, left + x]);
+			start = -1;
+		}
+	}
+	if (!gutters.length) return null;
+	// The columns a cell falls in, and whether it runs across a gutter.
+	const columnOf = (x) => gutters.filter((g) => (g[0] + g[1]) / 2 <= x).length;
+	const spans = (c) => gutters.some((g) => c[0] < g[0] && c[1] > g[1]);
+	const occupied = (r) => new Set(r.cells.map((c) => columnOf((c[0] + c[1]) / 2))).size;
+	const columns = gutters.length + 1;
+	// What a continuation line holds is text — a wrapped cell's second line, a
+	// header's — or a lone short label. A sparse row of figures, a row that
+	// fills in only the columns that changed, is a row of its own.
+	const cellText = (r, c) => r.lines.filter((l) => l.rect[0] < c[1] && l.rect[2] > c[0]).map((l) => l.text).join(" ");
+	const textual = (r) => {
+		const words = r.cells.filter((c) => /\p{L}{2,}/u.test(cellText(r, c))).length;
+		return words >= 0.5 * r.cells.length || (r.cells.length === 1 && r.rect[2] - r.rect[0] < 4 * size);
+	};
+	// A row that names itself in the first column and gives a value beside it
+	// — "Warmup Ratio 0.1" under "Optimizer AdamW" — is a row, however sparse.
+	const labelled = (r) => occupied(r) >= 2 && r.cells.some((c) => columnOf((c[0] + c[1]) / 2) === 0);
+	const partial = run.map((r) => occupied(r) <= columns / 2 && !r.cells.some(spans) && textual(r) && !labelled(r));
+	// Rows of several cells need to agree with the gutters found from them.
+	if (multiRows.filter((r) => !r.cells.some(spans)).length < 2) return null;
+
+	const owner = run.map((_, k) => k);
+	const find = (k) => (owner[k] === k ? k : (owner[k] = find(owner[k])));
+	for (let k = 0; k < run.length; k++) {
+		if (!partial[k]) continue;
+		const above = k > 0 ? run[k - 1].rect[1] - run[k].rect[3] : Infinity;
+		const below = k + 1 < run.length ? run[k].rect[1] - run[k + 1].rect[3] : Infinity;
+		// Text wraps downwards, so a part row belongs to the row above it unless
+		// the row below is plainly closer — as it is to the first lines of a
+		// bracketed cell whose label sits level with its middle line.
+		const target = below < 0.7 * above ? k + 1 : k - 1;
+		if (target < 0 || target >= run.length) continue;
+		const a = find(k), b = find(target);
+		if (a !== b) owner[a] = b;
+	}
+	// A cell of several lines stacked one over another — a bracketed block of
+	// layers — is one cell however its lines fall into rows, and the page's
+	// content says so: it hands the cell's lines over one after another down
+	// the column, then goes back up for the next cell to the right. A table set
+	// row by row goes across instead, and down only from a row's end to the
+	// next row's start.
+	const rowOf = new Map();
+	run.forEach((r, k) => { for (const l of r.lines) rowOf.set(l, k); });
+	const stream = [...rowOf.keys()].sort((a, b) => a.from - b.from);
+	const overlaps = (a, b) => Math.min(a.rect[2], b.rect[2]) - Math.max(a.rect[0], b.rect[0]) > 0.5 * Math.min(a.rect[2] - a.rect[0], b.rect[2] - b.rect[0]);
+	const oneCell = (l) => l.tightCells.length === 1;
+	// A list of settings written out column by column has as many lines in
+	// each column as rows; cells of several lines each, stacked beside cells
+	// of a different number, leave the columns at odds.
+	const unevenColumns = (a, b) => {
+		const counts = new Map();
+		for (let k = a; k <= b; k++) {
+			for (const l of run[k].lines) {
+				const c = columnOf((l.rect[0] + l.rect[2]) / 2);
+				counts.set(c, (counts.get(c) || 0) + 1);
+			}
+		}
+		const n = b - a + 1;
+		return [...counts.values()].some((m) => m >= 2 && m < n);
+	};
+	for (let s = 0; s < stream.length;) {
+		let e = s;
+		while (e + 1 < stream.length && oneCell(stream[e]) && oneCell(stream[e + 1])
+			&& rowOf.get(stream[e + 1]) > rowOf.get(stream[e]) && overlaps(stream[e], stream[e + 1])) e++;
+		const after = stream[e + 1];
+		const cell = stream.slice(s, e + 1);
+		if (e > s && after && rowOf.get(after) < rowOf.get(stream[e])
+			&& after.rect[0] >= Math.min(...cell.map((l) => l.rect[2])) - 0.5 * size
+			&& unevenColumns(rowOf.get(stream[s]), rowOf.get(stream[e]))) {
+			for (let k = rowOf.get(stream[s]); k < rowOf.get(stream[e]); k++) {
+				const a = find(k), b = find(k + 1);
+				if (a !== b) owner[a] = b;
+			}
+		}
+		s = e + 1;
+	}
+	const byRoot = new Map();
+	run.forEach((r, k) => {
+		const root = find(k);
+		if (!byRoot.has(root)) byRoot.set(root, []);
+		byRoot.get(root).push(r);
+	});
+	return { left, right, columnOf, rows: [...byRoot.values()] };
 }
 
 // The gap that normally separates two lines of one paragraph. Measured within
@@ -1792,7 +2024,9 @@ function joinContinuations(blocks, typicalGap) {
 		const hangs = a.lines.slice(1).every((l) => l.rect[0] > head.rect[0] + 0.5 * l.size);
 		const indented = !!(next && head && tail && tight && hangs
 			&& LIST_LABEL_RE.test(head.text)
-			&& !isCentred(next)
+			// (a line already read as prose is no display, however near the
+			// middle its end happens to leave it)
+			&& (next.flow || !isCentred(next))
 			&& next.rect[3] < tail.rect[1]
 			&& next.rect[0] > head.rect[0] + 0.5 * next.size);
 		// The tail of a list item is short and full of symbols and is easily
@@ -1939,6 +2173,10 @@ function splitSentences(text, math, lineStarts) {
 	// A bibliography entry is one unit: it is full of initials, abbreviated
 	// journal names and years, and none of those breaks are worth having.
 	if (BIB_KEY_RE.test(text)) return [[0, text.length]];
+	// ...and so is one numbered "47." rather than keyed, known by what a
+	// reference carries and a numbered list item does not: a year and pages.
+	if (/^\s*\d{1,3}\.\s/.test(text) && /\b(?:1[89]|20)\d{2}\b/.test(text)
+		&& /\d+\s*[–-]\s*\d+|\bpp\.|preprint|to appear/i.test(text)) return [[0, text.length]];
 
 	const out = [];
 	let start = 0;
@@ -2277,11 +2515,11 @@ function analysePage(rawChars, viewBox, opts = {}) {
 		keepRunningLines(unmeasured);
 	}
 	markContentsEntries(lines);
+	// Tables before formulas are grown: a cell that is off the flow and set
+	// beside a formula cell would otherwise be taken into the formula.
+	detectTables(lines, cols);
 	absorbBraceRows(lines);
 	absorbDisplayRows(lines);
-	markAlignedRows(lines);
-	markRowsAmongRows(lines);
-	markTableRows(lines, typicalLineGap(lines));   // after absorbing, so a formula's row is already one
 	return { chars, lines, cols, fragments };
 }
 
@@ -2369,8 +2607,11 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 		const oneThing = block.kind === "display" || block.tableRow !== undefined || block.tabular;
 		// Only a formula is widened to the measure; a table row keeps to the
 		// row it occupies.
-		const measure = block.kind === "display" ? (block.lines[0] && block.lines[0].col) : null;
-		const band = block.kind === "display" ? displayBand(block, lines) : null;
+		// A table row found as part of a table is marked across the table.
+		const tableBox = block.tableRow !== undefined && block.lines[0] && block.lines[0].tableBox;
+		const measure = block.kind === "display" ? (block.lines[0] && block.lines[0].col)
+			: tableBox ? { left: tableBox[0], right: tableBox[2] } : null;
+		const band = block.kind === "display" ? displayBand(block, lines) : tableBox ? [tableBox[1], tableBox[3]] : null;
 		for (const g of wanted) {
 			// A displayed formula and a row of table cells are both read as one
 			// thing, so both are highlighted as the one area they occupy — a
@@ -3572,7 +3813,7 @@ if (typeof module !== "undefined") {
 		CLAUSE_END_RE,
 		splitSentences, isBoundary, prevToken, rectsForChars, boundingArea, mergeBoxes, segmentPage, colIndexFor,
 		analysePage, describePage, markEquationNumbers, cacheFor, pageCache, CACHE_DOCS,
-		absorbDisplayRows, displayRows, markTableRows, displayBand,
+		absorbDisplayRows, displayRows, displayBand,
 		lineRanges, wordRanges, GRANULARITIES,
 		solidColor, toPercent, toUserBox, pageAspect, padBoxes, PADDING, mergeTiny, blendFor,
 		pageLuminance, CSS, STYLES,

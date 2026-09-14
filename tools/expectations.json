@@ -216,5 +216,93 @@
     "lacks": "[Du]"
    }
   ]
+ },
+ "1706.03762v7.pdf": {
+  "6": [
+   {
+    "has": "Recurrent O(n · d2)",
+    "kind": "text",
+    "lacks": "Convolutional"
+   }
+  ],
+  "8": [
+   {
+    "has": "GNMT + RL [38] 24.6",
+    "kind": "text",
+    "lacks": "ConvS2S"
+   }
+  ],
+  "9": [
+   {
+    "has": "5.29 24.9",
+    "kind": "text",
+    "lacks": "5.00"
+   },
+   {
+    "has": "positional embedding instead of sinusoids",
+    "kind": "text",
+    "lacks": "big"
+   }
+  ]
+ },
+ "1512.03385v1.pdf": {
+  "4": [
+   {
+    "has": "we insert shortcut connections",
+    "kind": "text",
+    "lacks": "conv"
+   }
+  ],
+  "5": [
+   {
+    "has": "conv3 x 28×28",
+    "kind": "text",
+    "lacks": "conv4"
+   },
+   {
+    "has": "plain-18",
+    "kind": "text",
+    "lacks": "ResNet"
+   }
+  ],
+  "12": [
+   {
+    "has": "VGG’s [41] VGG-16",
+    "kind": "text",
+    "lacks": "LOC"
+   }
+  ]
+ },
+ "1810.04805v2.pdf": {
+  "9": [
+   {
+    "has": "12 768 12 3.99",
+    "kind": "text",
+    "lacks": "24 1024"
+   }
+  ],
+  "13": [
+   {
+    "has": "Trm Trm Trm",
+    "kind": "text",
+    "lacks": "Lstm"
+   }
+  ]
+ },
+ "2106.09685v2.pdf": {
+  "6": [
+   {
+    "has": "4.7M",
+    "kind": "text",
+    "lacks": "1500.0M"
+   }
+  ],
+  "20": [
+   {
+    "has": "Optimizer AdamW",
+    "kind": "text",
+    "lacks": "Warmup"
+   }
+  ]
  }
 }

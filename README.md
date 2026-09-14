@@ -461,40 +461,48 @@ measures with spectral potentials. In Section 5 we …* — opens with a label t
 but its own second line is back at the margin, and what is set in under it is a
 displayed formula.
 
-**Tables.** A row reaches the plugin in one of two shapes. Sometimes it is one
-piece per cell, spread right across the measure, and read a cell at a time it
-says nothing — *theorem*, then *O(n) tests*. Sometimes the layout sees a single
-baseline and hands over the whole row as **one line**, cells and all, with the
-column gaps internal to it.
+**Tables.** A table is found the way a reader finds one: rows of cells, one
+under the next, whose gaps line up into columns. A row reaches the plugin in
+pieces — one per cell, or a run of cells the layout saw on one baseline — so
+rows are gathered first: lines standing side by side, **in one size of type**,
+are a visual row, and a row is cut into cells at gaps of about an em. A table is
+then a run of rows of several cells at a table's spacing, allowing short rows
+between them, and stopping at a line of prose, a caption, or a gap wider than a
+row's. Its columns are the **gutters** that nearly all of those rows leave
+white. A run with no gutter, of fewer than three rows, or whose rows are
+formulas — a matrix, an aligned derivation — is no table; nor is a list whose
+second column runs to the margin row after row, like a bibliography.
 
-Both are one line and are highlighted as the one band they occupy. The first is
-found by clustering pieces that share a band; the second by counting the wide
-gaps *inside* a line — several of them is a row, one of them is the run up to
-an equation number, and justified prose never stretches a word space that far.
-A row is also a block of its own: a table carries no full stops and often no
-paragraph breaks either, so without that a whole table of figures reads as one
-sentence. And a row is never split into sentences, because the full stops in it
-are not the ends of any.
+A visual row is not always a row of the table. A cell too long for its column
+wraps; a header's cell takes two lines; *these* partial rows — filling fewer
+than half the columns with text, crossing no gutter — belong to the nearer row
+beside them. A row that names itself in the first column and gives a value
+beside it (*Warmup Ratio 0.1*) is a row however sparse, and so is a row of
+figures that fills in only the columns that changed (Transformer's rows (A)–(D)).
 
-A **two-column** table gives each row a single wide gap, and one gap on its
-own is no evidence of anything — it is also the run up to an equation number.
-What makes those lines rows is that the gaps line up: three or more lines in a
-column, one under the next, whose second cells all start at the same place.
+A **stacked cell** — a bracketed block of three layers beside a block of two,
+with the row's label level with neither — breaks into visual rows that belong
+to no one row. What binds it is the order the page hands its text over in: down
+the cell's lines, then back up for the next cell to the right, where a table
+set row by row goes across. Down-and-back-up alone is not enough, since a list
+of settings written out column by column comes over the same way; its columns
+have as many lines as it has rows, while stacked cells leave the columns at odds.
 
-A row whose cells sit closer than the wide-gap test allows is, on its own, a
-line of text with a gap in it; **among the rows of its table** it is one more.
-A line standing at the table's leading between two rows, or beside one with a
-cell starting where one of that row's cells starts, is a row too.
+**Figures** have rows and columns too: a plot's tick labels and legend, a
+diagram's boxes. What a block of text is, its caption says — the caption reached
+first going up or down from it, past the figure's other labels but not past a
+line of prose. And a figure's labels set beside a column of text are kept out of
+that text's rows by their type size, and by the text's lines standing one under
+another on a common margin, as a paragraph's do.
 
-Rows are counted in **cells**, not pieces. A cell too long for its column wraps,
-and then the row arrives as the wrapped cell standing apart from the rest of
-the row — two pieces, but three cells — with the cell's second line alone
-underneath. That line is set in under its own cell and stops short of the next
-one, at ordinary leading, and it is read and highlighted with its row; a
-caption, or a capitalised line under a cell that had finished, is not. Nothing
-is pulled into a table from outside either: a lead-in that ends on a colon is
-still open as far as sentences go, but the header under it is not the rest of
-it.
+Each table row is read as one thing and **highlighted as one band** across the
+table, and a table is read row by row, a row column by column — a name, then
+the affiliation and address set under it — whatever order the layout used. A
+row is also a block of its own: a table carries no full stops and often no
+paragraph breaks, so without that a whole table of figures reads as one
+sentence. Nothing is pulled into a table from outside either: a lead-in that
+ends on a colon is still open as far as sentences go, but the header under it
+is not the rest of it.
 
 **Contents.** An entry in a table of contents is a row by the same token: a
 title, then a dot leader or a gap, then a page number. A leader is a run of full
@@ -515,16 +523,6 @@ own; a numbered line or two inside a paragraph is not a list. A short
 capitalised line right after the run, set no deeper than its entries
 (`APPENDIX …`), is the list's last entry, while a wrapped title set in under
 its own title carries on the entry above.
-
-A row of displayed maths is laid out like a table row and must not be caught by
-this; where the pieces are separate, what separates them is words. A table's
-cells carry them, a formula's pieces do not, so a row needs two cells with a
-real word in them before it counts as a table.
-
-A row is also *highlighted* as the one band it occupies, like a displayed
-formula — a box per cell leaves the row in pieces with the column gaps cut out
-of it. At line size a cell is still a line of its own, for stepping through a
-row one entry at a time.
 
 **Page furniture.** A running head is prose, and a line that is mostly algebra
 never is — which matters because a formula set low on the page has every other

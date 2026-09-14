@@ -9,7 +9,7 @@ const fs = require("fs");
 const GLOBALS = new Set(`
 Array Boolean Components Date Error Infinity Intl JSON Map Math MutationObserver
 Number Object Promise Proxy Reflect RegExp Set String Symbol TextDecoder TextEncoder
-Uint8Array WeakMap WeakRef WeakSet FinalizationRegistry structuredClone queueMicrotask
+Uint8Array Uint16Array WeakMap WeakRef WeakSet FinalizationRegistry structuredClone queueMicrotask
 Zotero clearTimeout console decodeURIComponent encodeURIComponent escape
 isFinite isNaN module parseFloat parseInt require setTimeout undefined unescape
 if for while switch catch return typeof instanceof new delete void do else async await
