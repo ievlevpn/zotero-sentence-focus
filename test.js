@@ -2680,4 +2680,36 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	}
 }
 
+// A label of two lines set between rows — "DeBERTa XXL / LoRA" beside the
+// rows it names — is read with a row, but its rows stay rows, and no row's
+// band lies over its neighbour's.
+{
+	const PAGE = [0, 0, 595, 842];
+	const size = 8;
+	const row = (y, name, values) => ({ pieces: [{ x: 160, text: name }, ...values.map((v, i) => ({ x: 250 + 45 * i, text: v }))], y, size, para: true });
+	const units = segmentPage(layout([
+		{ text: "The hyperparameters we used for each of the tasks in the benchmark are", x: 72, y: 790, size: 10 },
+		{ text: "listed in the table below, one setting to a row, with the method to the left.", x: 72, y: 778, size: 10, para: true },
+		row(740, "Method", ["MNLI", "SST-2", "MRPC", "CoLA"]),
+		row(720, "Batch Size", ["8", "8", "32", "4"]),
+		row(710, "# Epochs", ["5", "16", "30", "10"]),
+		{ text: "DeBERTa XXL", x: 85, y: 705, size, para: true },
+		row(700, "Learning Rate", ["1E-04", "6E-05", "2E-04", "1E-04"]),
+		{ text: "LoRA", x: 95, y: 695, size, para: true },
+		row(690, "Weight Decay", ["0", "0.01", "0.01", "0"]),
+		row(680, "CLS Dropout", ["0.15", "0", "0", "0.1"]),
+		{ text: "Table 10: The hyperparameters for DeBERTa XXL.", x: 72, y: 655, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	const rate = units.find((u) => u.text.includes("Learning Rate"));
+	assert.ok(rate && !rate.text.includes("Weight Decay") && !rate.text.includes("Epochs"), `a label between rows does not join them: ${got}`);
+	assert.ok(!units.some((u) => u.text === "DeBERTa XXL" || u.text === "LoRA"), `the label is read with a row: ${got}`);
+	const bands = units.filter((u) => /Batch|Epochs|Learning|Weight|Dropout|DeBERTa XXL|LoRA/.test(u.text) && !u.text.startsWith("Table")).map((u) => u.rects[0]);
+	assert.strictEqual(bands.length, 5, `five rows: ${got}`);
+	for (let i = 0; i < bands.length; i++) for (let j = i + 1; j < bands.length; j++) {
+		const overlap = Math.min(bands[i][3], bands[j][3]) - Math.max(bands[i][1], bands[j][1]);
+		assert.ok(overlap <= 0.01, `bands of neighbouring rows do not overlap: ${JSON.stringify(bands)}`);
+	}
+}
+
 console.log("all tests passed");

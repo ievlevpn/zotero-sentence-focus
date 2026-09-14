@@ -242,6 +242,11 @@
     "has": "positional embedding instead of sinusoids",
     "kind": "text",
     "lacks": "big"
+   },
+   {
+    "has": "(A) 16 32 32",
+    "kind": "text",
+    "lacks": "5.01"
    }
   ]
  },
@@ -319,6 +324,11 @@
     "has": "Optimizer AdamW",
     "kind": "text",
     "lacks": "Warmup"
+   },
+   {
+    "has": "Learning Rate 1E-04",
+    "kind": "text",
+    "lacks": "Weight Decay"
    }
   ]
  }

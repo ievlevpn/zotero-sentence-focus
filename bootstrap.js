@@ -1551,8 +1551,12 @@ function detectTables(lines, cols) {
 			const h = line.rect[3] - line.rect[1];
 			// A table is set in one size of type; a figure's labels beside a
 			// column of prose are not in a row with its lines.
-			const row = rows.find((r) => Math.min(r.rect[3], line.rect[3]) - Math.max(r.rect[1], line.rect[1]) > 0.5 * Math.min(h, r.rect[3] - r.rect[1])
-				&& sameSize(r.size, line.size));
+			// And side by side with every line of the row, not only with the
+			// row as it has grown: a label set between two rows overlaps both,
+			// and would otherwise chain them into one.
+			const overlap = (a, b) => Math.min(a.rect[3], b.rect[3]) - Math.max(a.rect[1], b.rect[1]);
+			const row = rows.find((r) => overlap(r, line) > 0.5 * Math.min(h, r.rect[3] - r.rect[1])
+				&& r.lines.every((m) => overlap(m, line) > 0) && sameSize(r.size, line.size));
 			if (row) {
 				row.lines.push(line);
 				row.rect = [Math.min(row.rect[0], line.rect[0]), Math.min(row.rect[1], line.rect[1]), Math.max(row.rect[2], line.rect[2]), Math.max(row.rect[3], line.rect[3])];
@@ -1643,24 +1647,57 @@ function detectTables(lines, cols) {
 			const table = tableOf(run, colWidth, size, col);
 			if (!table || figureText(run, lines, size)) continue;
 			const tableId = nextTable++;
+			// A label set between two rows — "DeBERTa XXL" beside the rows it
+			// names, "(A)" level with the middle of its group — is read with one
+			// of them, but its band stays the row's own: stretched over the label,
+			// it would lie over the neighbouring row's band.
+			const groupOf = new Map();
+			table.rows.forEach((group, g) => { for (const r of group) for (const l of r.lines) groupOf.set(l, g); });
+			const straddles = (l) => {
+				if (l.tightCells.length !== 1) return false;
+				for (const [m, g] of groupOf) {
+					if (g !== groupOf.get(l) && Math.min(l.rect[3], m.rect[3]) - Math.max(l.rect[1], m.rect[1]) > 0.2 * (m.rect[3] - m.rect[1])) return true;
+				}
+				return false;
+			};
+			const boxes = [];
 			for (const group of table.rows) {
 				const id = nextId++;
-				const top = Math.max(...group.map((r) => r.rect[3])), bottom = Math.min(...group.map((r) => r.rect[1]));
+				const members = group.flatMap((r) => r.lines);
+				const core = members.filter((l) => !straddles(l));
+				const own = core.length ? core : members;
+				const top = Math.max(...own.map((l) => l.rect[3])), bottom = Math.min(...own.map((l) => l.rect[1]));
+				// One box for the whole row, shared by its lines.
+				const box = [table.left, bottom, table.right, top];
+				boxes.push(box);
 				for (const r of group) {
 					for (const line of r.lines) {
 						line.tableRow = id;
 						line.tableId = tableId;
 						// A cell's label is read with its row, not dropped as a number.
 						line.furniture = false;
+						// Nor is a row that opens with a number a contents entry.
+						line.entryStart = false;
 						line.eqNumFrom = -1;
 						line.eqNumTo = -1;
 						line.tabular = true;
 						line.kind = "text";
 						line.flow = false;
 						line.inline = false;
-						line.tableBox = [table.left, bottom, table.right, top];
+						line.tableBox = box;
 						line.tableColumn = table.columnOf(line.rect[0]);
 					}
+				}
+			}
+			// A label the layout ran into its row's line still reaches into the
+			// next row; neighbouring bands meet halfway rather than overlap.
+			boxes.sort((a, b) => b[3] - a[3]);
+			for (let k = 1; k < boxes.length; k++) {
+				const upper = boxes[k - 1], lower = boxes[k];
+				if (lower[3] > upper[1] && lower[3] < upper[3] && upper[1] > lower[1]) {
+					const mid = (lower[3] + upper[1]) / 2;
+					upper[1] = mid;
+					lower[3] = mid;
 				}
 			}
 		}
@@ -1806,6 +1843,7 @@ function tableOf(run, colWidth, size, col) {
 	const heading = (r, k) => r.lines.length === 1 && occupied(r) === 1
 		&& (Math.abs((r.rect[0] + r.rect[2]) / 2 - centre) <= size
 			|| (k + 1 < run.length && run[k + 1].cells[0][0] >= r.rect[0] + 0.5 * size
+				&& run[k + 1].cells[0][0] <= r.rect[0] + 3 * size
 				&& columnOf(run[k + 1].cells[0][0]) === columnOf(r.rect[0])));
 	const partial = run.map((r, k) => occupied(r) <= columns / 2 && !r.cells.some(spans) && textual(r) && !labelled(r) && !heading(r, k));
 	// Rows of several cells need to agree with the gutters found from them.
@@ -1856,7 +1894,10 @@ function tableOf(run, colWidth, size, col) {
 			&& rowOf.get(stream[e + 1]) > rowOf.get(stream[e]) && overlaps(stream[e], stream[e + 1])) e++;
 		const after = stream[e + 1];
 		const cell = stream.slice(s, e + 1);
+		// (A label of two lines in the first column — "DeBERTa XXL / LoRA" —
+		// names the rows beside it; it does not make them one.)
 		if (e > s && after && rowOf.get(after) < rowOf.get(stream[e])
+			&& columnOf((stream[s].rect[0] + stream[s].rect[2]) / 2) > 0
 			&& after.rect[0] >= Math.min(...cell.map((l) => l.rect[2])) - 0.5 * size
 			&& unevenColumns(rowOf.get(stream[s]), rowOf.get(stream[e]))) {
 			for (let k = rowOf.get(stream[s]); k < rowOf.get(stream[e]); k++) {
