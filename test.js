@@ -2712,4 +2712,43 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	}
 }
 
+// --- displays, and what only looks like them -------------------------------
+
+// Each case sits in a paragraph of prose, so the page's margins are known.
+{
+	const prose = (y) => [
+		{ text: "The update rule is chosen with some care, since the moment estimates are", x: 72, y, size: 10 },
+		{ text: "biased towards zero in the first steps, and so we correct them before use.", x: 72, y: y - 12, size: 10 },
+		{ text: "The effective step is then bounded by the chosen learning rate in each case.", x: 72, y: y - 24, size: 10, para: true },
+	];
+	const unit = (lines, needle) => segmentPage(layout(lines, [0, 0, 595, 842]), [0, 0, 595, 842]).sentence.find((u) => u.text.includes(needle));
+
+	// A heading in small capitals: the lower-case letters are capitals set
+	// smaller, on the baseline — words, not subscripts.
+	const heading = unit([...prose(760), {
+		pieces: [{ x: 72, text: "2.1" }, { x: 100, text: "A" }, { text: "DAM’S", size: 8 }, { text: " U" }, { text: "PDATE", size: 8 }, { text: " R" }, { text: "ULE", size: 8 }],
+		y: 710, size: 10, para: true,
+	}, ...prose(690)], "DAM");
+	assert.strictEqual(heading && heading.kind, "text", `a small-caps heading is no formula: ${JSON.stringify(heading)}`);
+
+	// A caption quoting a formula.
+	const caption = unit([...prose(760), { text: "Figure 2: Graphical model, where «τ = [1, 3]».", x: 180, y: 710, size: 10, para: true }, ...prose(680)], "Figure 2");
+	assert.strictEqual(caption && caption.kind, "text", `a caption is no formula: ${JSON.stringify(caption)}`);
+
+	// Bulleted items that are formulas, or nearly: a list all the same.
+	const items = segmentPage(layout([...prose(760),
+		{ text: "• «Â = A + Ā»,", x: 90, y: 710, size: 10, para: true },
+		{ text: "• «T̂ = T ⊗ S» and «T̂γ = T ⊗ R»,", x: 90, y: 696, size: 10, para: true },
+		{ text: "• «Ĝ = G ⊗ H».", x: 90, y: 682, size: 10, para: true },
+		...prose(662)], [0, 0, 595, 842]), [0, 0, 595, 842]).sentence.filter((u) => u.text.includes("•"));
+	assert.ok(items.length >= 2 && items.every((u) => u.kind === "text"), `bulleted items are prose: ${JSON.stringify(items)}`);
+
+	// A formula too long to centre, set flush left: its operator names — Ric
+	// taking its argument straight after it — are no words of prose.
+	const long = unit([...prose(760), { text: "where", x: 72, y: 718, size: 10, para: true },
+		{ text: "«H(X, Y) = −∇R − 2(»Ric«(Y, X) − 4»Ric«(Y, Y) − ∇»Ric«(Y, X)) + 2|»Ric«(Y, ·)|² − 4∇»Ric«(X, X)»", x: 72, y: 698, size: 10, para: true },
+		...prose(676)], "H(X, Y)");
+	assert.strictEqual(long && long.kind, "display", `a flush-left formula with operator names is a display: ${JSON.stringify(long)}`);
+}
+
 console.log("all tests passed");

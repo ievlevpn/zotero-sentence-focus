@@ -5,3 +5,5 @@ out/
 models/
 out-disagreements.json
 out-detect/
+out-disagreements-*.json
+out-detect-*.txt

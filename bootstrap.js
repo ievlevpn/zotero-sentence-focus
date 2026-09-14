@@ -409,6 +409,16 @@ function makeLine(chars, from, to) {
 		if (runStart < 0) return;
 		const length = runText.length;
 		const mark = () => { for (let k = runStart; k < end; k++) formulaish[k - from] = true; };
+		// An operator's name — Ric, Hess, tr — is set in roman like a word, but
+		// takes its argument straight after it, "Ric(Y, X)", "Hess_L(Y, Y)": no
+		// word of prose runs into a parenthesis.
+		let next = end;
+		if (!chars[end - 1].space) {
+			while (next <= to && chars[next].size < 0.85 * size && chars[next].baseline < baseline - 0.1 * size && !chars[next].space) next++;
+		}
+		const operator = !chars[end - 1].space && next <= to && chars[next].c === "("
+			&& (next === end || !chars[next - 1].space);
+		if (length >= 2 && operator) { mark(); runStart = -1; runText = ""; runIsMath = true; return; }
 		// One letter between non-letters is a variable; prose italicises whole
 		// words. An operator name — min, max, log, det — is set in roman inside
 		// a formula, and counting it as a word makes algebra look like prose.
@@ -424,7 +434,10 @@ function makeLine(chars, from, to) {
 		// — and is formula material in its own right. It also must not glue the
 		// letters on either side of it into a word: `E_n` is a variable with an
 		// index, not a two-letter run.
-		const script = !!ch && ch.size < 0.85 * size;
+		// Small capitals are set smaller too, but on the line's baseline, where
+		// no index or exponent sits: "ADAM’S UPDATE RULE" is words.
+		const smallCap = !!ch && /\p{Lu}/u.test(ch.c) && Math.abs(ch.baseline - baseline) <= 0.05 * size;
+		const script = !!ch && ch.size < 0.85 * size && !smallCap;
 		// A ligature carries several characters in one glyph and is a word, so
 		// length is what tells a variable from "ffi".
 		const isLetter = !!ch && !script && ch.c.length === 1 && /\p{L}/u.test(ch.c);
@@ -1084,6 +1097,11 @@ function flowColumn(own, col, all = own) {
 		return d > 0.75 * pitch && d < 1.35 * pitch;
 	};
 	for (const line of own) line.flow = false;
+	// A formula too long to centre is set flush left and runs past the right
+	// margin — "d/dτ ⟨∇_Y Y, X⟩ = … + 2Y·Ric(Y, X) − X·Ric(Y, Y)". Prose never
+	// overruns the measure by an em, and an operator's name or two in it make
+	// it no line of words.
+	const overfull = (line) => line.rect[2] > right + size && line.textWords <= 2 && line.formulaFrac >= 0.5 && line.hasRelation;
 	// On the column's margin, or on an indent some full line of prose starts
 	// at: a paragraph's first line, a list item's continuation.
 	// Only lines that are unmistakably prose establish a margin: a displayed
@@ -1126,13 +1144,17 @@ function flowColumn(own, col, all = own) {
 		// The column's own edge is enough; an indent is only prose's when the
 		// line runs the measure or reads as prose — a formula can start a point
 		// or two from a paragraph's indent.
-		if (line.flow) continue;
+		if (line.flow || overfull(line)) continue;
 		if (worded(line) && (onMargin(line.rect[0], left) || onItemText(line)
 			|| (margins.some((m) => onMargin(line.rect[0], m)) && (full(line) || prose(line))))) line.flow = true;
 		// A paragraph's first line at its indent, before any line on the page
 		// has shown that indent to be one: a few ems in, and reading as prose —
 		// "For s ∈ [0, 1], we define the subspace H_s of H by".
-		else if (prose(line) && line.textWords >= 4 && line.rect[0] > left && line.rect[0] - left <= 2.5 * size
+		// Formula-heavy as it may be, a line of words justified out to the
+		// right margin is prose too: "From now on we will assume that ‖f₁‖ ≤ 1
+		// and ‖f₂‖ ≤ 1, which is not a".
+		else if ((prose(line) || (full(line) && line.textWords >= 6)) && line.textWords >= 4
+			&& line.rect[0] > left && line.rect[0] - left <= 2.5 * size
 			&& (!above || !above.flow || above.paraEnd || !full(above))) line.flow = true;
 		// A short last line at the margin carrying on a full line of prose —
 		// "Then" / "u ≤ v in Ω." — needs no words to be the sentence's end.
@@ -1178,19 +1200,37 @@ function flowColumn(own, col, all = own) {
 	}
 	// A piece of an inline formula — a fraction's numerator the layout set
 	// apart — stands inside a line of the flow and belongs to it.
-	for (const line of own) {
-		if (line.flow || line.tabular) continue;
-		const middle = (line.rect[1] + line.rect[3]) / 2;
-		line.inline = own.some((other) => other.flow && ((middle > other.rect[1] && middle < other.rect[3]
-			&& line.rect[0] >= other.rect[0] - size && line.rect[2] <= other.rect[2] + size)
-			// or the rest of a line of prose the layout cut off at a tall glyph,
-			// on its baseline and straight after it
-			|| (Math.abs(line.baseline - other.baseline) <= 0.3 * size
-				&& line.rect[0] - other.rect[2] < 1.5 * size && line.rect[0] > other.rect[2] - size)));
+	// Where a piece stands. A big delimiter alone is given a box a sliver
+	// high at the top of its glyph, which hangs down from there.
+	const standsAt = (l) => (l.hangTop !== null && l.textWords === 0 && l.rect[3] - l.rect[1] < 0.5 * size
+		? l.hangTop - size : (l.rect[1] + l.rect[3]) / 2);
+	// So does a piece the layout cut from such a line at a tall glyph — an
+	// inline fraction's big parentheses, and the rest of the line after them —
+	// set level with the pieces before it and straight after them. Pieces
+	// found so pass the line on to the next.
+	for (let pass = 0; pass < 8; pass++) {
+		let changed = false;
+		for (const line of own) {
+			if (line.flow || line.inline || line.tabular) continue;
+			const middle = standsAt(line);
+			const anchor = own.find((other) => (other.flow || other.inline) && ((other.flow && middle > other.rect[1] && middle < other.rect[3]
+				&& line.rect[0] >= other.rect[0] - size && line.rect[2] <= other.rect[2] + size)
+				|| (Math.abs(line.baseline - other.baseline) <= 0.3 * size
+					&& line.rect[0] - other.rect[2] < 1.5 * size && line.rect[0] > other.rect[2] - size)
+				|| (line.rect[0] - other.rect[2] < 2 * size && line.rect[0] > other.rect[2] - size
+					&& (other.flow || other.textWords === 0 || line.textWords === 0)
+					// level with the line of prose the pieces carry on
+					&& middle > (other.inlineOf || other).rect[1] - 0.3 * size && middle < (other.inlineOf || other).rect[3] + 0.3 * size)));
+			if (anchor) { line.inline = true; line.inlineOf = anchor.inlineOf || anchor; changed = true; }
+		}
+		if (!changed) break;
 	}
 	for (const line of own) {
 		if (line.tabular) continue;
-		if (line.flow || line.inline) { line.kind = "text"; continue; }
+		// A caption is words about a figure, whatever formula it quotes —
+		// "Figure 2: Graphical model …, where τ = [1, 3]." — and is set centred,
+		// off the paragraph's margins, like a display.
+		if (line.flow || line.inline || (CAPTION_RE.test(line.text) && line.textWords >= 2)) { line.kind = "text"; continue; }
 		const numbered = line.eqNumFrom >= 0 || line.eqNumTo >= 0;
 		// A symbol or two in a line of words — the variable in a contents entry —
 		// does not make it a formula; a relation, or formula enough, does.
@@ -1490,7 +1530,8 @@ function absorbDisplayRows(lines) {
 // ends on a semicolon runs straight into the next one: the layout sees no
 // indent between them so it marks no paragraph break, and a semicolon is not a
 // full stop, so nothing else separates them either.
-const LIST_LABEL_RE = /^\s*[([]?\s*(?:\d{1,3}|[ivxlcdm]{1,5}|\p{L})\s*[).\]]\s+\S/iu;
+// A bullet is a label too: "• One has V_β = {0} for every β < α."
+const LIST_LABEL_RE = /^\s*(?:[([]?\s*(?:\d{1,3}|[ivxlcdm]{1,5}|\p{L})\s*[).\]]\s+|[•◦▪▸‣]\s*)\S/iu;
 const CLAUSE_END_RE = /[.;:!?\u2026]["'\u201d\u2019)\]]*\s*$/;
 
 // A bibliography entry's key. Keys come numbered, "[12]", or made of the
@@ -2029,7 +2070,12 @@ function linesToBlocks(lines, typicalGap, mergeDisplay) {
 		if (!cur) { cur = { kind: "text", lines: [], tableRow: ln.tableRow, tabular: ln.tabular }; blocks.push(cur); }
 		cur.lines.push(ln);
 		const rowContinues = ln.tableRow !== undefined && next && next.tableRow === ln.tableRow;
-		if (ln.paraEnd && !bridgeAfter && !rowContinues) cur = null;
+		// The layout ends a paragraph wherever it cut a line at a tall glyph;
+		// the piece carrying the line on is no new paragraph.
+		const reach = (l) => (l.hangTop !== null && l.textWords === 0 ? [Math.min(l.rect[1], l.hangTop - 2 * l.size), l.rect[3]] : [l.rect[1], l.rect[3]]);
+		const lineContinues = next && next.inline && next.col === ln.col && next.rect[0] >= ln.rect[2] - ln.size
+			&& Math.min(reach(next)[1], reach(ln)[1]) - Math.max(reach(next)[0], reach(ln)[0]) > -0.3 * ln.size;
+		if (ln.paraEnd && !bridgeAfter && !rowContinues && !lineContinues) cur = null;
 	}
 	return blocks;
 }
@@ -2092,6 +2138,8 @@ function joinContinuations(blocks, typicalGap) {
 			// (a line already read as prose is no display, however near the
 			// middle its end happens to leave it)
 			&& (next.flow || !isCentred(next))
+			// (nor is a numbered line, which is a display wherever it stands)
+			&& next.eqNumFrom < 0 && next.eqNumTo < 0
 			&& next.rect[3] < tail.rect[1]
 			&& next.rect[0] > head.rect[0] + 0.5 * next.size);
 		// The tail of a list item is short and full of symbols and is easily

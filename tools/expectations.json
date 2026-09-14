@@ -331,5 +331,91 @@
     "lacks": "Weight Decay"
    }
   ]
+ },
+ "2006.11239.pdf": {
+  "4": [
+   {
+    "has": "Equation (10) reveals that",
+    "kind": "text",
+    "lacks": "Since"
+   },
+   {
+    "has": "The complete sampling procedure",
+    "kind": "text"
+   }
+  ]
+ },
+ "2010.02502.pdf": {
+  "5": [
+   {
+    "has": "Figure 2: Graphical model",
+    "kind": "text"
+   }
+  ],
+  "9": [
+   {
+    "has": "6 RELATED WORK",
+    "kind": "text"
+   }
+  ],
+  "18": [
+   {
+    "has": "Quadratic: we select",
+    "kind": "text",
+    "lacks": "Linear"
+   }
+  ],
+  "19": [
+   {
+    "has": "where θ = arccos",
+    "kind": "text",
+    "lacks": "These values"
+   }
+  ]
+ },
+ "1412.6980.pdf": {
+  "2": [
+   {
+    "has": "2.1 ADAM’S UPDATE RULE",
+    "kind": "text"
+   }
+  ]
+ },
+ "math_0211159.pdf": {
+  "16": [
+   {
+    "has": "Ric(Y, X)−X·Ric(Y, Y )",
+    "kind": "display",
+    "lacks": "so, if"
+   }
+  ],
+  "17": [
+   {
+    "has": "H(X, Y ) = −∇Y",
+    "kind": "display",
+    "lacks": "For an"
+   }
+  ]
+ },
+ "1303.5113.pdf": {
+  "5": [
+   {
+    "has": "∂th = ∂x2h",
+    "kind": "display",
+    "lacks": "KPZ-type"
+   }
+  ],
+  "21": [
+   {
+    "has": "• Aˆ = A + A ̄,",
+    "kind": "text"
+   }
+  ],
+  "50": [
+   {
+    "has": "From now on we will assume",
+    "kind": "text"
+   }
+  ]
  }
 }

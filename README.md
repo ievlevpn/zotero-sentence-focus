@@ -134,12 +134,19 @@ skip apart, each full line running the measure. So, per column:
   number, which makes the whole list one displayed formula; and a line on an
   item's text indent, carried on past a display, is prose too;
 - a paragraph's **first line** at an indent no full line has shown yet, reading
-  as prose, is prose — "For s ∈ [0, 1], we define the subspace H_s of H by";
+  as prose or justified out to the right margin with words in it, is prose —
+  "For s ∈ [0, 1], we define the subspace H_s of H by";
 - a **short last line** at the margin carrying on a full line of prose — "Then"
   / "u ≤ v in Ω." — is prose without a word in it, and may start a little in
   where a limit hangs left of its sum;
 - a fragment on a prose line's baseline, straight after it, or a piece standing
-  inside it, is part of it.
+  inside it, is part of it — and so is each piece of a line the layout cut at a
+  tall glyph, an inline fraction's big parentheses and the rest of the line
+  after them, set level with the prose line and straight after the piece
+  before; the layout's paragraph break between such pieces is ignored.
+- a formula too long to centre is set flush left and runs past the right
+  margin, which prose never does by an em: such a line, mostly formula with a
+  relation in it, is off the flow.
 
 Everything **off the flow** that has a relation in it, or formula enough, is a
 displayed formula, whatever words it carries; off the flow with no formula, it
@@ -149,11 +156,19 @@ a numerator, a limit, a brace's other branch — joins it by position, and a
 line on the flow never does.
 
 A word is a run of letters, a ligature included — "define" set with an `fi` was
-once two runs of two letters and no word at all.
+once two runs of two letters and no word at all. Small capitals are set smaller
+but on the baseline, where no index sits, so "ADAM’S UPDATE RULE" is words; an
+operator's name takes its argument straight after it — "Ric(Y, X)",
+"Hess_L(Y, Y)" — which no word of prose does, so it is formula. A bullet is a
+list label like "(i)", and a caption — a line opening "Figure 2:" — is words
+whatever formula it quotes.
 
 These rules were checked against a neural formula detector run over the corpus
 (`tools/detect.mjs`, with the model kept out of the repository): on 10,000 lines
 the two now disagree on two, and in both the detector is the one that is wrong.
+A second round, on eleven more papers in other styles (PRL, ICLR and NeurIPS,
+old CM-font arXiv, a 180-page monograph), found the rules above; what is left
+there is algorithm listings, plot labels and formulas drawn as graphs.
 The detector is not part of the plugin, and the comparison is for finding where
 the rules go wrong, not for deciding at run time.
 
