@@ -4,6 +4,7 @@
   "description": "Offline harness: Zotero's own pdf.js on real PDFs. Not shipped in the .xpi.",
   "type": "module",
   "dependencies": {
-    "@napi-rs/canvas": "^1.0.9"
+    "@napi-rs/canvas": "^1.0.9",
+    "onnxruntime-node": "^1.29.0"
   }
 }
