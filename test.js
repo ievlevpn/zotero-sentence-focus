@@ -2483,4 +2483,53 @@ function fromReport(rows, opts = {}) {
 	assert.ok(units.some((u) => u.kind === "text" && u.text.startsWith("and νk")), `and the prose after it is its own: ${got}`);
 }
 
+// --- the flow model ---------------------------------------------------------------
+
+// Prose is what stands on the paragraph's margins; formulas are what is set off
+// them. One page carrying each shape the rules used to be argued case by case.
+{
+	const PAGE = [0, 0, 612, 792];
+	const CM = "FSUMJD+CMMI10";
+	const P = (text, y, extra = {}) => ({ text, x: 72, y, size: 10, ...extra });
+	const units = segmentPage(layout([
+		P("We will record here many examples of degenerate elliptic equations and note how they", 700),
+		P("arise, which is proper if the matrix is nonnegative and b is nondecreasing in its argument.", 688),
+		// a line of prose that is mostly formula, at the margin
+		P("corresponds to max[«F»(«x», «u», «Du»), |«Du»| «−» «g»(«x»)] «=» 0 «≤» «h»(«x»), «x» «∈» «Ω».", 676, { mathFont: CM, para: true }),
+		{ text: "Two relevant special cases are the following ones, which we treat in turn below here", x: 84, y: 664, size: 10 },
+		P("and state without any further proof, since both of them are quite standard by now:", 652, { para: true }),
+		// a numbered display with a condition in words, its number close
+		{ pieces: [{ text: "(2.4)", x: 72 }, { text: "«F»(«x», «u»(«x»), «p», «X») «≤» 0 for all «x» «∈» «O» and («p», «X») «∈» «J»(«x»)", x: 119 }],
+			y: 632, size: 10, mathFont: CM, para: true },
+		P("and a function is a solution when both hold; notice that with these normalizations we put", 612),
+		// a cross-reference opening a line of prose
+		P("(2.13) to find «λ»(«Z», «x») «≤» «o»(|«x»|^2^) or «λZ» «≤» «PXP» where the projection is as above", 600, { mathFont: CM }),
+		P("and it is not hard to see that this is also quite sufficient for the claim made. Then", 588),
+		// a short last line with no words at all
+		P("«u» «≤» «v» in «Ω».", 576, { mathFont: CM, para: true }),
+		// cases branches carrying words, beside a brace
+		{ text: "«F»(«x», «r», «p», «X») «=»", x: 140, y: 548, size: 10, mathFont: CM, para: true },
+		{ pieces: [{ text: "{", x: 206, dy: 7.5, raw: true, font: "JIWGEV+CMEX10" }, { text: "«−» det(«X») «+» «f»(«x») if «X» «≥» 0,", x: 217, dy: 6 }],
+			y: 548, size: 10, mathFont: CM, para: true },
+		{ text: "«+∞» otherwise;", x: 217, y: 540, size: 10, mathFont: CM, para: true },
+		P("the operator is then degenerate elliptic, which follows from the fact that the determinant", 520),
+		P("is nondecreasing on nonnegative matrices, and from the list of properties that follows here:", 508, { para: true }),
+		// list items full of formulas
+		{ text: "(i) We have «Z» «∈» «D»([0, «τ»], «R»^«d»^) and «I» «∈» «D»([0, 1]; «L»(«R»^«d»^)), with proba-", x: 88, y: 492, size: 10, mathFont: CM },
+		{ text: "bility one, as the construction shows.", x: 104, y: 480, size: 10, para: true },
+		{ text: "(ii) We have that «IZ» «∈» «D»([0, «τ»], «L»(«R»^«d»^)) and «IZ» «=» («IZ», «∂IZ»).", x: 88, y: 466, size: 10, mathFont: CM, para: true },
+		P("The proof of both statements is postponed to the next section, where it is carried out.", 446, { para: true }),
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text.slice(0, 40)]));
+	const kindOf = (has) => { const u = units.find((unit) => unit.text.includes(has)); return u && u.kind; };
+	assert.strictEqual(kindOf("corresponds to max"), "text", `prose crowded with formula: ${got}`);
+	assert.strictEqual(kindOf("for all x ∈ O"), "display", `a numbered display with words: ${got}`);
+	assert.ok(!units.some((u) => u.text.includes("(2.4)")), `its number is dropped: ${got}`);
+	assert.strictEqual(kindOf("(2.13) to find"), "text", `a cross-reference in prose: ${got}`);
+	assert.ok(units.some((u) => u.kind === "text" && u.text.endsWith("Then u ≤ v in Ω.")), `a short last line: ${got}`);
+	assert.strictEqual(kindOf("otherwise"), "display", `a branch with a word: ${got}`);
+	assert.strictEqual(kindOf("(i) We have"), "text", `a list item full of formula: ${got}`);
+	assert.strictEqual(kindOf("(ii) We have"), "text", `and its sibling: ${got}`);
+}
+
 console.log("all tests passed");

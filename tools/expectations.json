@@ -1,0 +1,33 @@
+{
+  "_note": "Checked by check-corpus.mjs against local copies of the papers (tools/pdfs, not committed). Each entry: a unit whose text contains `has` must be of `kind`; `lacks` must not appear in it; `alone` means no other unit contains `has`.",
+  "cil-users-guide.pdf": {
+    "6":  [{ "has": "which is the nonparametric formulation", "kind": "text" },
+           { "has": "∂x21", "kind": "display", "lacks": "which is" },
+           { "has": "A(p) =", "kind": "display" }],
+    "7":  [{ "has": "α inβf[", "kind": "display" },
+           { "has": "corresponds to max", "kind": "text" },
+           { "has": "are degenerate elliptic.", "kind": "text" }],
+    "8":  [{ "has": "+∞ otherwise;", "kind": "display" },
+           { "has": "−∞ otherwise,", "kind": "display" },
+           { "has": "ut + F (t, x, u, Du, D2u) = 0", "kind": "display", "lacks": "(1.15)" }],
+    "13": [{ "has": "convex hull", "kind": "display" },
+           { "has": "0 ≤ 〈p, q〉 for q", "kind": "display", "lacks": "(2.10)" },
+           { "has": "where x ̃ = (x1", "kind": "text" }],
+    "14": [{ "has": "if and only if either p = Dφ", "kind": "display", "lacks": "(2.1" },
+           { "has": "Then", "kind": "text" }],
+    "17": [{ "has": "where A = D2φ(xˆ) ∈ S(N )", "kind": "text" },
+           { "has": "X1 . . . 0", "kind": "display", "lacks": "where" }],
+    "18": [{ "has": "γ(r − s) ≤ F (x,r,p,X)", "kind": "display", "lacks": "(3.13)" },
+           { "has": "Then u ≤ v in Ω.", "kind": "text" }],
+    "10": [{ "has": "F (x, u(x), p, X) ≤ 0 for all x ∈ O", "kind": "display", "lacks": "(2.4)" }]
+  },
+  "2412.01645v2.pdf": {
+    "2":  [{ "has": "σ(Xs) dBs", "kind": "display" }],
+    "35": [{ "has": "‖Ξ(1),s,x − Ξ(1),s,y ‖D2H−W ([s,1]) = J0,x", "kind": "display", "lacks": "Then, by the fundamental" }],
+    "54": [{ "has": "(iii) With probability one", "kind": "text" }]
+  },
+  "2409.11130v1.pdf": {
+    "48": [{ "has": "dydr +", "kind": "display" },
+           { "has": "( [0, 1] × T , L p).", "kind": "text" }]
+  }
+}

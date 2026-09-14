@@ -106,13 +106,52 @@ the glyphs that are maths by Unicode whatever they claim to be, is what carries
 display detection across typesetting conventions. A line with four or more real
 words is prose either way.
 
-**Display equations.** A line is scored on how much of it is formula, how few
-real words it has, whether it carries a relation symbol, whether it is centred
-in its column or indented from it, and whether it ends in a right-margin
-equation number. Score high enough and it becomes its own unit rather than part
-of the prose around it. Consecutive display lines — an `align` environment —
-merge into one. The equation number itself is dropped: it is neither
-highlighted nor treated as text.
+**Display equations: the flow of the text.** Whether a line is a displayed
+formula is decided by *how the page is set*, not by what the line looks like.
+Judged on its own, a line is a pile of evidence that cuts both ways — a
+formula's condition carries words ("otherwise", "if and only if either", "closed
+k-walks based at v"), and a line of prose can be mostly formula ("corresponds
+to max{F(x, u, Du, D²u), |Du| − g(x)} = 0.") — and every rule that weighed such
+evidence line by line grew an exception for the next paper.
+
+Prose is set in a **flow**: lines on the paragraph's own margins, a baseline
+skip apart, each full line running the measure. So, per column:
+
+- the **measure** is taken from the column's wide lines of words, and the
+  baseline skip from pairs of them;
+- a **margin** is the column's own left edge, or an indent that a line of
+  unmistakable prose (several words, little formula) starts at while running
+  the measure — a paragraph's first line, a list item's continuation;
+- a line carrying words is **prose** if it stands on the column's edge, or on an
+  indent while running the measure or reading as prose; or if it shares its left
+  edge, a baseline skip away, with a neighbour on the flow — which passes a list
+  item's continuation, a hanging indent, or a caption or quotation set
+  narrower than the column and centred in it, down line by line;
+- a **list item** is prose however much formula it holds: a label opening a full
+  line, or opening a line where a sibling item's label opens;
+- a **short last line** at the margin carrying on a full line of prose — "Then"
+  / "u ≤ v in Ω." — is prose without a word in it;
+- a fragment on a prose line's baseline, straight after it, or a piece standing
+  inside it, is part of it.
+
+Everything **off the flow** that has a relation in it, or formula enough, is a
+displayed formula, whatever words it carries; off the flow with no formula, it
+is a heading, a caption or a title. A numbered line is a formula, and so is a
+full line with no words at all. What stands beside or stacked with a formula —
+a numerator, a limit, a brace's other branch — joins it by position, and a
+line on the flow never does.
+
+A margin is matched to within a quarter of an em: TeX sets margins exactly, an
+italic capital overhangs its origin by a point or two, and a centred formula
+that merely starts near an indent is off by more. A column with too few lines
+of prose to find its measure — a page that is nearly all formula, a short
+synthetic page — falls back to the older rules, which score each line on how
+much of it is formula, how few words it has, whether it carries a relation,
+whether it is centred or indented, and whether it is numbered.
+
+Consecutive display lines — an `align` environment — merge into one. The
+equation number itself is dropped: it is neither highlighted nor treated as
+text.
 
 **How tall the band is** decides itself from the page rather than from the
 formula. Taken from the formula's own printable glyphs it is wrong in both
@@ -658,6 +697,26 @@ straight past `node --check` and only fails when a key is pressed in Zotero.
 `drawHighlight()`, so the styles it shows are the ones the reader draws. It is
 the quickest way to tune a radius or a slant without a round trip through
 Zotero. Neither file ships in the `.xpi`.
+
+**Real PDFs, offline.** `tools/` runs Zotero's own pdf.js — extracted from the
+installed Zotero, so the characters are exactly the ones the reader sees — on
+real papers in Node, and draws what the plugin makes of a page on top of the
+rendered page. Nothing in it ships, and neither the papers nor Zotero's code are
+committed.
+
+```sh
+cd tools && npm install
+unzip -o -j "/Applications/Zotero.app/Contents/Resources/app/omni.ja" \
+  resource/reader/pdf/build/pdf.mjs resource/reader/pdf/build/pdf.worker.mjs -d vendor
+node harness.mjs pdfs/paper.pdf 14          # the diagnostics report for a page
+node overlay.mjs pdfs/paper.pdf 1-10 --out out   # pages with their units drawn on
+node snapshot.mjs before.json pdfs/*.pdf    # every page's units, to diff after a change
+node diff.cjs before.json after.json        # what a change did, page by page
+node check-corpus.mjs                       # the reported cases, on the real papers
+```
+
+A change to the analysis is made against the whole corpus: snapshot, change,
+snapshot, diff, and look at the pages that moved.
 
 `test.js` builds the same per-character stream Zotero produces from a compact
 description of a page, so every rule above is pinned down by a test that reads

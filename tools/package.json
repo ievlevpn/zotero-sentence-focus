@@ -1,0 +1,9 @@
+{
+  "name": "sentence-focus-tools",
+  "private": true,
+  "description": "Offline harness: Zotero's own pdf.js on real PDFs. Not shipped in the .xpi.",
+  "type": "module",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.9"
+  }
+}

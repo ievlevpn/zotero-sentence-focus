@@ -415,6 +415,10 @@ function makeLine(chars, from, to) {
 			if (runStart < 0) { runStart = i; runText = ""; runIsMath = true; }
 			runText += ch.c;
 			runIsMath = runIsMath && ch.math;
+			// Zotero hands over no space characters, only a flag on the glyph
+			// before one: without closing the run there, "for all" was a single
+			// six-letter word and a line of prose held one word per clause.
+			if (ch.space) closeRun(i + 1);
 			continue;
 		}
 		closeRun(i);
@@ -762,7 +766,7 @@ function markFurniture(lines, viewBox) {
 // leaves a space, not a gulf. A list item's label is followed by words; a
 // number followed by nothing but formula numbers that formula.
 function numbersFormula(line) {
-	if (!/^\s*\(\d{1,3}(?:\.\d{1,3}){0,2}[a-z]?\)/.test(line.text)) return false;
+	if (!/^\s*\([A-Z]?\.?\d{1,3}(?:\.\d{1,3}){0,2}[a-z]?\)/.test(line.text)) return false;
 	let glyphs = 0, formula = 0;
 	for (let i = line.leftLabelTo + 1; i <= line.to; i++) {
 		const kind = line.glyphKinds[i - line.from];
@@ -770,7 +774,8 @@ function numbersFormula(line) {
 		glyphs++;
 		if (kind & 2) formula++;
 	}
-	return glyphs >= 2 && formula / glyphs >= 0.6 && line.textWords === 0;
+	// A condition can follow — "for r ≥ s" — but the line is mostly formula.
+	return glyphs >= 2 && formula / glyphs >= 0.5 && line.textWords <= 3;
 }
 
 function remeasureWithoutNumber(line) {
@@ -791,7 +796,11 @@ function remeasureWithoutNumber(line) {
 }
 
 function classifyLine(line) {
-	if (line.formulaFrac < 0.25 || line.textWords >= 4) return "text";
+	// Words once meant prose here when they were undercounted three to one;
+	// counted properly, a formula's condition — "if and only if either" —
+	// carries several, and a numbered line is a formula whatever it says.
+	const numbered = line.eqNumFrom >= 0 || line.eqNumTo >= 0;
+	if (line.formulaFrac < 0.25 || (line.textWords >= (numbered ? 8 : 6))) return "text";
 	const col = line.col || { left: line.rect[0], right: line.rect[2] };
 	const colWidth = (col.right - col.left) || 1;
 	let score = 1;
@@ -799,7 +808,7 @@ function classifyLine(line) {
 	if (line.hasRelation) score++;
 	if (line.rect[0] - col.left > 1.5 * line.size) score++;
 	if (isCentred(line)) score++;
-	if (line.textWords <= 1) score++;
+	if (line.textWords <= 2) score++;
 	// Nothing on the line is a word. A row of maths often reaches the reader in
 	// pieces — "P(X,Z)," on its own, once the layout has cut the line at a
 	// summation sign — and each piece has to stand on its own feet here, or it
@@ -822,8 +831,11 @@ const EQ_LABEL_RE = /^[([]\s*[^()[\]]{1,14}\s*[)\]]$/;
 // a few points clear of the formula), the gap test would strip ordinary
 // parentheses; the margin is what makes the looser test safe.
 function markEquationNumbers(lines) {
+	let previous = null;
 	for (const line of lines) {
 		if (line.furniture) continue;
+		const before = previous;
+		previous = line;
 		const col = line.col;
 		const atRightMargin = !!col && line.rect[2] >= col.right - 0.06 * (col.right - col.left);
 		const atLeftMargin = !!col && line.rect[0] <= col.left + 0.06 * (col.right - col.left);
@@ -844,8 +856,17 @@ function markEquationNumbers(lines) {
 		if (line.labelFrom >= 0 && (line.labelGap >= 2.5 * line.size || atRightMargin)) {
 			line.eqNumFrom = line.labelFrom;
 		}
-		if (line.leftLabelTo >= 0 && atLeftMargin
-			&& (line.leftLabelGap >= 2.5 * line.size || line.leftLabelRaised || numbersFormula(line))) {
+		// A list label sits half an em from its item; an equation's number is
+		// set well clear of its formula. A number, as opposed to "(a)" or "(iii)",
+		// needs only a little more than an em to be taken for one.
+		const numeric = /^\s*\([A-Z]?\.?\d{1,3}(?:\.\d{1,3}){0,2}[a-z]?\)/.test(line.text);
+		const clear = line.leftLabelGap >= (numeric ? 1.2 : 2.5) * line.size;
+		// A cross-reference opening a line of prose — "…we put (x̃, g(x̃)) into" /
+		// "(2.13) to find λ⟨Zx̃, x̃⟩ ≤ …" — is followed by formula too, but the line
+		// before it runs the measure and does not end there.
+		const carriedOn = !!before && before.col === col && !before.paraEnd
+			&& before.rect[2] >= col.right - 0.06 * (col.right - col.left);
+		if (line.leftLabelTo >= 0 && atLeftMargin && (clear || line.leftLabelRaised || (numbersFormula(line) && !carriedOn))) {
 			line.eqNumTo = line.leftLabelTo;
 		}
 		// The number's digits are no part of the formula, and on a short piece
@@ -886,6 +907,151 @@ function displayRows(lines) {
 		}
 	}
 	return rows;
+}
+
+// --- the flow of the text ---------------------------------------------------
+//
+// What a displayed formula is, is decided by how the page is set rather than
+// by what the line looks like. Prose is set in a flow: a column of lines on
+// the paragraph's own margins, one baseline-skip apart, each full line running
+// the measure. A line on that flow carrying words is prose, however much of it
+// is formula — "corresponds to max{F(x, u, Du, D²u), |Du| − g(x)} = 0.", "where
+// A = D²φ(x̂) ∈ S(N)". Everything set off the flow — indented, centred, beside
+// a brace, on a formula's baseline — that has any formula in it is a displayed
+// formula, whatever words it carries: "otherwise", "trace", "closed k-walks".
+// Numbered lines are always formulas, and so is a full line with no words in
+// it at all.
+//
+// A margin is the flow's when the paragraph uses it: the column's own left
+// edge; or a left edge shared, at the baseline skip, by lines one of which
+// runs the measure — a list item's continuation, a first line's indent, a
+// caption or quotation set narrower than the column, whose lines run to its
+// own right edge.
+//
+// Where a column has too little prose to find its margins, the older rules
+// that judge each line on its own are used instead.
+function classifyByFlow(lines, cols) {
+	const unmeasured = [];
+	for (const col of cols) {
+		const own = lines.filter((line) => line.col === col && !line.furniture && !line.rot);
+		if (!flowColumn(own, col)) unmeasured.push(...own);
+	}
+	const orphans = lines.filter((line) => !line.furniture && (line.rot || !cols.includes(line.col)));
+	return unmeasured.concat(orphans);
+}
+
+function flowColumn(own, col) {
+	const width = (col.right - col.left) || 1;
+	const worded = (line) => line.textWords >= 1 && !line.tabular && line.eqNumFrom < 0 && line.eqNumTo < 0;
+	const wide = own.filter((line) => worded(line) && line.rect[2] - line.rect[0] > 0.6 * width);
+	if (wide.length < 3) return false;
+	const left = median(wide.map((line) => line.rect[0]));
+	const right = median(wide.map((line) => line.rect[2]));
+	const size = median(wide.map((line) => line.size)) || 10;
+	const pitches = [];
+	for (let i = 1; i < own.length; i++) {
+		const d = own[i - 1].baseline - own[i].baseline;
+		if (wide.includes(own[i - 1]) && wide.includes(own[i]) && d > 0.9 * size && d < 1.8 * size) pitches.push(d);
+	}
+	const pitch = median(pitches) || 1.2 * size;
+
+	const full = (line) => line.rect[2] >= right - size;
+	// TeX sets its margins exactly; a formula that merely starts near one is
+	// off by more than a point or two.
+	// (A quarter of an em: an italic capital or an f overhangs its origin.)
+	const onMargin = (x, m) => Math.abs(x - m) <= 0.25 * size;
+	const sameLeft = (a, b) => onMargin(a.rect[0], b.rect[0]);
+	const skip = (a, b) => {
+		const d = a.baseline - b.baseline;
+		return d > 0.75 * pitch && d < 1.35 * pitch;
+	};
+	for (const line of own) line.flow = false;
+	// On the column's margin, or on an indent some full line of prose starts
+	// at: a paragraph's first line, a list item's continuation.
+	// Only lines that are unmistakably prose establish a margin: a displayed
+	// formula wide enough to run the measure would otherwise vouch for itself.
+	const margins = [left];
+	const prose = (line) => line.textWords >= 3 && line.formulaFrac < 0.35;
+	for (const line of wide) {
+		if (full(line) && prose(line) && line.rect[0] - left <= 4 * size && !margins.some((m) => onMargin(line.rect[0], m))) {
+			margins.push(line.rect[0]);
+		}
+	}
+	for (let i = 0; i < own.length; i++) {
+		const line = own[i], above = own[i - 1];
+		// The column's own edge is enough; an indent is only prose's when the
+		// line runs the measure or reads as prose — a formula can start a point
+		// or two from a paragraph's indent.
+		if (worded(line) && (onMargin(line.rect[0], left)
+			|| (margins.some((m) => onMargin(line.rect[0], m)) && (full(line) || prose(line))))) line.flow = true;
+		// A short last line at the margin carrying on a full line of prose —
+		// "Then" / "u ≤ v in Ω." — needs no words to be the sentence's end.
+		// (Zotero's paragraph break is no evidence against it: a tall exponent on
+		// the short line is enough to make it guess one. A colon is — that is
+		// how a display is introduced.)
+		else if (above && above.flow && !/:\s*$/.test(above.text) && full(above) && onMargin(line.rect[0], left)
+			&& line.eqNumFrom < 0 && line.eqNumTo < 0 && !line.tabular && skip(above, line)) line.flow = true;
+	}
+	// A list item is prose however much formula it holds, and it is known by
+	// its label: a label opening a full line, or opening a line at the same
+	// place as another item's.
+	for (const line of own) {
+		if (line.flow || !worded(line) || !LIST_LABEL_RE.test(line.text)) continue;
+		if (full(line) || own.some((other) => other !== line && worded(other)
+			&& LIST_LABEL_RE.test(other.text) && sameLeft(line, other))) line.flow = true;
+	}
+	// On a margin the paragraph establishes, which can be passed down a list
+	// item or a caption line by line.
+	for (let pass = 0; pass < 4; pass++) {
+		let changed = false;
+		for (let i = 0; i < own.length; i++) {
+			const line = own[i];
+			if (line.flow || !worded(line)) continue;
+			const above = own[i - 1], below = own[i + 1];
+			const chained = (other, upper, lower) => other && worded(other) && skip(upper, lower) && (
+				// the same margin, one of the two running the measure — or both
+				// running to the same narrower edge
+				(sameLeft(line, other) && (full(line) || full(other)
+					// a caption or quotation: narrower than the column, and set
+					// centred in it — which a formula's branches are not
+					|| (Math.abs(line.rect[2] - other.rect[2]) <= 0.5 * size
+						&& line.rect[2] - line.rect[0] > 0.5 * (right - left)
+						&& Math.abs((line.rect[0] - left) - (right - line.rect[2])) <= 1.5 * size)))
+				// a list item's hanging indent under its label
+				|| (other === above && other.flow && LIST_LABEL_RE.test(other.text)
+					&& line.rect[0] - other.rect[0] > 0.4 * size && line.rect[0] - other.rect[0] <= 4 * size));
+			if (chained(above, above, line) || chained(below, line, below)) {
+				line.flow = true;
+				changed = true;
+			}
+		}
+		if (!changed) break;
+	}
+	// A piece of an inline formula — a fraction's numerator the layout set
+	// apart — stands inside a line of the flow and belongs to it.
+	for (const line of own) {
+		if (line.flow || line.tabular) continue;
+		const middle = (line.rect[1] + line.rect[3]) / 2;
+		line.inline = own.some((other) => other.flow && ((middle > other.rect[1] && middle < other.rect[3]
+			&& line.rect[0] >= other.rect[0] - size && line.rect[2] <= other.rect[2] + size)
+			// or the rest of a line of prose the layout cut off at a tall glyph,
+			// on its baseline and straight after it
+			|| (Math.abs(line.baseline - other.baseline) <= 0.3 * size
+				&& line.rect[0] - other.rect[2] < 1.5 * size && line.rect[0] > other.rect[2] - size)));
+	}
+	for (const line of own) {
+		if (line.tabular) continue;
+		if (line.flow || line.inline) { line.kind = "text"; continue; }
+		const numbered = line.eqNumFrom >= 0 || line.eqNumTo >= 0;
+		// A symbol or two in a line of words — the variable in a contents entry —
+		// does not make it a formula; a relation, or formula enough, does.
+		const formula = line.hasRelation || line.formulaFrac >= 0.15 || (line.mathFrac > 0 && line.textWords <= 2);
+		// A heading is set bold or large; a big operator is large too, but has no
+		// words to be a heading with.
+		const heading = (line.bold || line.size > 1.15 * size) && line.textWords >= 1;
+		line.kind = numbered || (formula && !heading) ? "display" : "text";
+	}
+	return true;
 }
 
 // A piece of a formula can carry a word — `trace`, `if` — and arrive as a line
@@ -1099,7 +1265,7 @@ function absorbBraceRows(lines) {
 	}
 	for (const span of spans) {
 		if (span.top - span.bottom < 2 * span.size) continue;
-		const beside = lines.filter((line) => !line.furniture && !span.members.has(line)
+		const beside = lines.filter((line) => !line.furniture && !span.members.has(line) && !line.flow && !line.inline
 			&& line.col === span.col && line.rot === span.rot && !line.tabular
 			// A branch is never a full line of text.
 			&& !(line.col && line.rect[2] - line.rect[0] > 0.8 * (line.col.right - line.col.left))
@@ -1137,13 +1303,15 @@ function absorbDisplayRows(lines) {
 		// for a fraction's numerator and wrong for the tail of a sentence. So
 		// a piece must either carry no words — an operator name like `min`
 		// does not count as one — or be set in script type.
-		if (line.furniture || line.kind === "display") continue;
-		if (carriesFormulaOn(line, rows, measure)) {
+		if (line.furniture || line.kind === "display" || line.flow || line.inline) continue;
+		if (line.flow === false) {
+			// Off the flow, words are no evidence of prose: only where it stands.
+		} else if (carriesFormulaOn(line, rows, measure)) {
 			line.kind = "display";
 			absorbed = true;
 			continue;
 		}
-		if (line.textWords > 0 && line.size >= 0.85 * bodySize && !interleaved(line, lines)) continue;
+		if (line.flow === undefined && line.textWords > 0 && line.size >= 0.85 * bodySize && !interleaved(line, lines)) continue;
 			const height = line.rect[3] - line.rect[1];
 			const width = line.rect[2] - line.rect[0];
 			if (height <= 0) continue;
@@ -1218,8 +1386,10 @@ function markTableRows(lines, typicalGap) {
 	let id = 0;
 	for (const row of rows) {
 		const cells = row.members.reduce((n, m) => n + m.cells.length, 0);
+		// Words in a cell are a cell's; words in a piece of formula — the "dydr"
+		// after an integral — are not what makes a table.
 		const isRow = row.members.length >= 2 && cells >= 3
-			&& row.members.filter((m) => m.textWords >= 1).length >= 2;
+			&& row.members.filter((m) => m.textWords >= 1 && m.formulaFrac < 0.5).length >= 2;
 		// A row the layout kept on one line is already known for what it is;
 		// it is looked at here only for cells wrapped onto the lines below it.
 		const oneLine = row.members.length === 1 && row.members[0].tabular && row.members[0].kind === "text"
@@ -1965,8 +2135,11 @@ function analysePage(rawChars, viewBox, opts = {}) {
 	for (const ln of lines) {
 		if (!ln.furniture) ln.kind = classifyLine(ln);
 	}
-	promoteSetOffFormulas(lines, typicalLineGap(lines));
-	keepRunningLines(lines);
+	const unmeasured = classifyByFlow(lines, cols);
+	if (unmeasured.length) {
+		promoteSetOffFormulas(unmeasured, typicalLineGap(unmeasured));
+		keepRunningLines(unmeasured);
+	}
 	markContentsEntries(lines);
 	absorbBraceRows(lines);
 	absorbDisplayRows(lines);
@@ -2005,7 +2178,8 @@ function describePage(rawChars, viewBox, opts = {}) {
 			+ ` words ${ln.textWords} rel ${ln.hasRelation ? "y" : "n"} eqnum ${ln.eqNumFrom >= 0 ? "y" : ln.eqNumTo >= 0 ? "left" : "n"}`
 			+ ` para ${ln.paraEnd ? "y" : "n"}`
 			+ (ln.hangTop !== null ? ` hang ${Math.round(ln.hangTop)}` : "")
-			+ (ln.tableRow !== undefined ? ` row ${ln.tableRow}` : ln.tabular ? " tabular" : ""),
+			+ (ln.tableRow !== undefined ? ` row ${ln.tableRow}` : ln.tabular ? " tabular" : "")
+			+ (ln.flow ? " flow" : ln.inline ? " inline" : ""),
 			`         fonts ${top}`,
 			`         text  ${JSON.stringify(ln.text.slice(0, 90))}`,
 		);
