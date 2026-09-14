@@ -24,6 +24,11 @@ const files = args;
 if (overlayDir) { mkdirSync(overlayDir, { recursive: true }); for (const f of readdirSync(overlayDir)) if (f.endsWith(".png")) unlinkSync(`${overlayDir}/${f}`); }
 
 if (onlyModels) MODELS.splice(0, MODELS.length, ...MODELS.filter((m) => onlyModels.split(",").includes(m.key)));
+// Models are downloaded by hand into models/ (not committed); skip any that are not there.
+{
+	const { existsSync } = await import("node:fs");
+	MODELS.splice(0, MODELS.length, ...MODELS.filter((m) => existsSync(m.file) || console.log(`skipping ${m.key}: ${m.file} not present`)));
+}
 for (const m of MODELS) m.session = await ort.InferenceSession.create(m.file, { intraOpNumThreads: 4 });
 
 // One render per page, at the resolution the largest model wants.
