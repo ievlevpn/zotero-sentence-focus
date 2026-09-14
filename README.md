@@ -532,14 +532,24 @@ stutters.
 
 What the cache holds is bounded twice over, because a reading session opens
 many documents and none of this is worth holding for as long as Zotero runs.
-A page is kept **per step size**, not with all four worked out — analysing a
-page produces all four in one pass, but a page's words outnumber its sentences
-twenty to one, and keeping all four costs about ten times what keeping one
-does. Sixty pages are kept per document, fifteen at word size, and four
+A page is kept **per step size**, and only that one is built: a page's words
+outnumber its sentences twenty to one, so boxing every word only to throw it
+away when stepping by sentence was most of the work past the analysis. Sixty pages are kept per document, fifteen at word size, and four
 documents at all, evicted least-recently-used so the document being read is
-never the one dropped. The ceiling, every cache full, is about 6 MB. The analysis itself runs in about **1.5 ms** for
-a dense page of around 3,500 glyphs, so what you wait on is the one round-trip
-to Zotero's PDF worker, and only the first time you visit a page.
+never the one dropped. The ceiling, every cache full, is about 6 MB. The cache holds only what a
+highlight is drawn from — text, boxes, a type size — never a page's lines or
+glyphs, which are dropped as soon as a page is analysed.
+
+The analysis itself takes **1.9 ms** a page on average and under 4 ms at worst,
+measured over 207 pages of four mathematical papers (`tools/profile.mjs`), so
+what you wait on is the one round-trip to Zotero's PDF worker, and only the
+first time you visit a page. What made the difference: font names are read by
+regex once per font rather than once per glyph (the cache lives for one page),
+medians sort a typed array instead of calling a comparator, and a formula's
+band is worked out once rather than once per step size. Nothing grows with
+the size of a page faster than its pieces do — a 640-piece matrix analyses in
+5 ms (`tools/stress.cjs`) — and repeated analysis leaves the heap where it was
+(`tools/leakcheck.mjs`).
 
 The drawing units are square — x runs 0..100 across the page and y runs
 0..100&times;aspect down it — so a corner radius, a blur and a slant are the
@@ -548,8 +558,8 @@ come out visibly squashed on a page that is taller than it is wide.
 
 Highlights are positioned as a percentage of the page box, using pdf.js's own
 page matrix. That means zooming and rotating need no recomputation at all — the
-ruler simply scales with the page. Switching step size costs nothing either: a
-page is analysed once and cached with all four granularities.
+ruler simply scales with the page. Switching step size re-reads only the page
+in view.
 
 Boxes are gathered into visual rows by how much they overlap vertically rather
 than by an exact match on their extent, and every box in a row is drawn on that
@@ -713,6 +723,8 @@ node overlay.mjs pdfs/paper.pdf 1-10 --out out   # pages with their units drawn 
 node snapshot.mjs before.json pdfs/*.pdf    # every page's units, to diff after a change
 node diff.cjs before.json after.json        # what a change did, page by page
 node check-corpus.mjs                       # the reported cases, on the real papers
+node profile.mjs pdfs/*.pdf                 # analysis time per page, slowest pages
+node --expose-gc leakcheck.mjs pdfs/*.pdf   # the heap across repeated analysis
 ```
 
 A change to the analysis is made against the whole corpus: snapshot, change,

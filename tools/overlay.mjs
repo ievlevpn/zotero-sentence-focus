@@ -1,16 +1,19 @@
 // Draw what the plugin makes of a page on top of the page itself.
 // node overlay.mjs file.pdf pages... [--out dir]
 // Sentence units alternate between two warm tints; displays are blue.
+// The output directory holds one run: its earlier PNGs are removed first, so
+// looking at pages again and again never piles images up.
 import { openPdf, B } from "./harness.mjs";
 import * as napi from "@napi-rs/canvas";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
 import { basename } from "node:path";
 
 const args = process.argv.slice(2);
 const outIdx = args.indexOf("--out");
-const out = outIdx >= 0 ? args.splice(outIdx, 2)[1] : "out";
+const out = outIdx >= 0 ? args.splice(outIdx, 2)[1] : new URL("./out", import.meta.url).pathname;
 const [path, ...pageSpecs] = args;
 mkdirSync(out, { recursive: true });
+for (const f of readdirSync(out)) if (f.endsWith(".png")) unlinkSync(`${out}/${f}`);
 const doc = await openPdf(path);
 const pages = [];
 for (const spec of pageSpecs.length ? pageSpecs : ["1-" + doc.numPages]) {

@@ -63,7 +63,7 @@ const GREEK = (cp) => (cp >= 0x0370 && cp <= 0x03ff) || (cp >= 0x1f00 && cp <= 0
 // `greekIsMath` is decided per page: in a Greek-language document the alphabet
 // is prose, and treating it as math would suppress every sentence break.
 function isMathChar(ch, greekIsMath) {
-	if (MATH_FONT_RE.test(ch.font)) return true;
+	if (ch.mathFont !== undefined ? ch.mathFont : MATH_FONT_RE.test(ch.font)) return true;
 	const cp = ch.c.codePointAt(0);
 	if (isMathCode(cp)) return true;
 	return greekIsMath && GREEK(cp);
@@ -112,6 +112,18 @@ const ABBREV_MAYBE = new Set(["etc", "al", "ff", "seq", "et"]);
 function materialize(raw) {
 	const out = [];
 	let greek = 0, letters = 0;
+	// Font names repeat glyph after glyph; the regexes that read them run once
+	// per font. The cache lives for this call only, so it cannot grow across
+	// the documents a session opens.
+	const fonts = new Map();
+	const fontFacts = (name) => {
+		let facts = fonts.get(name);
+		if (!facts) {
+			facts = { math: MATH_FONT_RE.test(name), extension: EXTENSION_FONT_RE.test(name.replace(/^[A-Z]{6}\+/, "")) };
+			fonts.set(name, facts);
+		}
+		return facts;
+	};
 	for (const ch of raw) {
 		const c = ch.c;
 		if (!c) continue;
@@ -123,12 +135,16 @@ function materialize(raw) {
 			letters++;
 			if (GREEK(cp)) greek++;
 		}
+		const font = ch.fontName || "";
+		const facts = fontFacts(font);
 		out.push({
 			c,
 			rect: [rect[0], rect[1], rect[2], rect[3]],
 			irect: [irect[0], irect[1], irect[2], irect[3]],
 			size: ch.fontSize || (rect[3] - rect[1]) || 10,
-			font: ch.fontName || "",
+			font,
+			mathFont: facts.math,
+			extension: facts.extension,
 			bold: !!ch.bold,
 			italic: !!ch.italic,
 			baseline: typeof ch.baseline === "number" ? ch.baseline : rect[1],
@@ -149,15 +165,16 @@ function materialize(raw) {
 
 // --- lines -----------------------------------------------------------------
 
+// A typed array sorts numbers natively, without a comparator call per step.
 const median = (a) => {
 	if (!a.length) return 0;
-	const s = [...a].sort((x, y) => x - y);
+	const s = Float64Array.from(a).sort();
 	return s[s.length >> 1];
 };
 
 const percentile = (a, p) => {
 	if (!a.length) return 0;
-	const s = [...a].sort((x, y) => x - y);
+	const s = Float64Array.from(a).sort();
 	return s[Math.min(s.length - 1, Math.floor(p * s.length))];
 };
 
@@ -330,7 +347,7 @@ const EXTENSION_FONT_RE = /^(?:cm|lm|eu|tx|px|zpl|newtx|newpx|mt|stix)?ex[a-z]*\
 
 function hangsBelowBaseline(ch) {
 	if (ch.rot) return false;
-	if (EXTENSION_FONT_RE.test(ch.font.replace(/^[A-Z]{6}\+/, ""))) return true;
+	if (ch.extension !== undefined ? ch.extension : EXTENSION_FONT_RE.test(ch.font.replace(/^[A-Z]{6}\+/, ""))) return true;
 	const above = ch.rect[3] - ch.baseline, below = ch.baseline - ch.rect[1];
 	return below > 0 && above < 0.5 * below;
 }
@@ -2188,7 +2205,7 @@ function describePage(rawChars, viewBox, opts = {}) {
 	// What all that turned into, which is the half a screenshot does show —
 	// having both in one place is what makes a report worth pasting.
 	out.push("", "--- units (sentence) ---");
-	for (const unit of segmentPage(rawChars, viewBox, opts).sentence) {
+	for (const unit of segmentPage(rawChars, viewBox, { ...opts, only: "sentence" }).sentence) {
 		// The boxes as well as the text: where a highlight is drawn is half of
 		// what can go wrong, and it cannot be read off the lines above.
 		const boxes = unit.rects
@@ -2202,8 +2219,12 @@ function describePage(rawChars, viewBox, opts = {}) {
 	return out.join("\n");
 }
 
+// `opts.only` names the one step size wanted. The reader only ever keeps the
+// units it is stepping by, and building all four — every word boxed on the
+// page, then thrown away — is most of the work past the analysis itself.
 function segmentPage(rawChars, viewBox, opts = {}) {
 	const out = { word: [], line: [], sentence: [], paragraph: [] };
+	const wanted = opts.only && GRANULARITIES.includes(opts.only) ? [opts.only] : GRANULARITIES;
 	const { chars, lines, cols } = analysePage(rawChars, viewBox, opts);
 	if (!lines.length) return out;
 
@@ -2218,33 +2239,34 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 		// leader is a row of them, and splitting there hands its page number
 		// to the entry below.
 		const whole = block.kind === "display" || block.tabular || block.tableRow !== undefined;
-		const sentences = whole ? [[0, text.length]] : splitSentences(text, math, lineStarts);
 		const ranges = {
-			word: wordRanges(text),
-			line: lineRanges(text, lineStarts),
-			sentence: sentences,
-			paragraph: [[0, text.length]],
+			word: () => wordRanges(text),
+			line: () => lineRanges(text, lineStarts),
+			sentence: () => (whole ? [[0, text.length]] : splitSentences(text, math, lineStarts)),
+			paragraph: () => [[0, text.length]],
 		};
-		for (const g of GRANULARITIES) {
+		// The same for every step size: where the block sits and how tall a
+		// formula's band is.
+		const oneThing = block.kind === "display" || block.tableRow !== undefined || block.tabular;
+		// Only a formula is widened to the measure; a table row keeps to the
+		// row it occupies.
+		const measure = block.kind === "display" ? (block.lines[0] && block.lines[0].col) : null;
+		const band = block.kind === "display" ? displayBand(block, lines) : null;
+		for (const g of wanted) {
 			// A displayed formula and a row of table cells are both read as one
 			// thing, so both are highlighted as the one area they occupy — a
 			// box per cell leaves the row in pieces with the column gaps cut
 			// out of it. Stepping word by word still wants the tokens boxed
 			// individually, and at line size a cell is a line of its own.
-			const oneThing = block.kind === "display" || block.tableRow !== undefined || block.tabular;
 			const wholeArea = oneThing && g !== "word" && g !== "line";
-			// Only a formula is widened to the measure; a table row keeps to the
-			// row it occupies.
-			const measure = block.kind === "display" ? (block.lines[0] && block.lines[0].col) : null;
-			const band = block.kind === "display" ? displayBand(block, lines) : null;
-			for (const [a, b] of ranges[g]) {
+			for (const [a, b] of ranges[g]()) {
 				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea, measure, band);
 				if (unit) out[g].push(unit);
 			}
 		}
 	}
 	// Reading order: down a column, then on to the next one.
-	for (const g of GRANULARITIES) {
+	for (const g of wanted) {
 		for (const u of out[g]) u.col = colIndexFor(u.left, cols);
 		out[g].sort((u, v) => (u.col - v.col) || (v.top - u.top));
 	}
@@ -2346,8 +2368,9 @@ async function computeUnits(session, pageIndex, key) {
 	try {
 		const data = Cu.waiveXrays(await v.pdf.getPageData(Cu.cloneInto({ pageIndex }, v.win)));
 		if (data && data.chars) {
-			const all = segmentPage(data.chars, data.viewBox || [0, 0, 612, 792], { mergeDisplay: !!pref("mergeDisplay") });
-			units = all[granularity()] || all.sentence || [];
+			const g = granularity();
+			const all = segmentPage(data.chars, data.viewBox || [0, 0, 612, 792], { mergeDisplay: !!pref("mergeDisplay"), only: g });
+			units = all[g] || all.sentence || [];
 		}
 	} catch (e) {
 		Zotero.debug(`Sentence Focus: page ${pageIndex + 1} unreadable - ` + e);
