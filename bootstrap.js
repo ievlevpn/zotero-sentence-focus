@@ -35,6 +35,7 @@ const DEFAULTS = {
 	copyUnit: true,              // Cmd/Ctrl-C copies the step when nothing is selected
 	jumpKey: "alt-j",            // alt-j | backslash | off
 	countReading: true,          // keep a count of what has been read in a tab
+	resume: "",                  // where the ruler was when the plugin last stopped
 };
 
 function pref(key) {
@@ -5388,6 +5389,116 @@ function openMenu(doc, btn, reader) {
 	};
 }
 
+// --- surviving an update ---------------------------------------------------
+
+// Updating a plugin stops the old copy and starts the new one; the reader tabs
+// that are open are not reloaded. Two things would otherwise be lost until the
+// tab was closed and opened again: the button, and the ruler itself.
+//
+// Zotero asks plugins for their toolbar buttons when a reader's toolbar is
+// mounted — which for an already-open tab happened before this copy of the
+// plugin existed, and nothing asks again. So the button is put into the part
+// of the toolbar Zotero keeps for plugins, the way Zotero's own `append`
+// does: one `section` of our own inside `custom-sections`.
+//
+// Nothing is lost if the toolbar is rebuilt later: that empties the whole of
+// `custom-sections` and asks every plugin again, and the button comes back
+// through the ordinary event.
+function toolbarSection(reader) {
+	try {
+		const doc = reader._iframeWindow.document;
+		return doc.querySelector(".toolbar .custom-sections");
+	} catch (e) {
+		return null;
+	}
+}
+
+function refreshOpenToolbars() {
+	let readers = [];
+	try { readers = Zotero.Reader._readers || []; } catch (e) { return; }
+	for (const reader of readers) {
+		try {
+			const holder = toolbarSection(reader);
+			// A tab still loading has no toolbar yet; when it mounts it will
+			// ask, and the event will find us.
+			if (!holder || holder.querySelector("[data-sfz-button]")) continue;
+			const doc = holder.ownerDocument;
+			const section = doc.createElement("div");
+			section.className = "section";
+			holder.append(section);
+			renderButton({ reader, doc, append: (el) => section.append(el) });
+		} catch (e) {
+			Zotero.debug("Sentence Focus: could not put the button back - " + e);
+		}
+	}
+}
+
+// Where the ruler was, per attachment, written when the plugin stops and read
+// back when its button is next built. That is the update case, and also the
+// one where Zotero is restarted and restores its tabs.
+const RESUME_LIMIT = 20;
+
+function saveResume() {
+	const out = {};
+	let kept = 0;
+	for (const [reader, session] of sessions) {
+		if (kept >= RESUME_LIMIT) break;
+		const id = reader && reader.itemID;
+		if (id == null) continue;
+		out[id] = session.kind === "dom"
+			? { kind: "dom", section: session.section, unit: session.unitIndex }
+			: { kind: "pdf", page: session.pageIndex, unit: session.unitIndex };
+		kept++;
+	}
+	setPref("resume", kept ? JSON.stringify(out) : "");
+}
+
+// Read once: a ruler that has been put back is not put back again, and an
+// entry for a tab that is never opened again goes when the next stop rewrites
+// the list.
+function takeResume(reader) {
+	const id = reader && reader.itemID;
+	if (id == null) return null;
+	let saved;
+	try {
+		saved = JSON.parse(String(pref("resume")) || "{}");
+	} catch (e) {
+		saved = {};
+	}
+	const here = saved[id];
+	if (!here) return null;
+	delete saved[id];
+	setPref("resume", Object.keys(saved).length ? JSON.stringify(saved) : "");
+	return here;
+}
+
+// Turn the ruler back on where it was. The view is left alone: the tab is
+// already showing what the reader was looking at, and scrolling it because a
+// plugin updated underneath would be the plugin taking over the page.
+function resumeSession(reader, doc, btn, where) {
+	const session = startSession(reader, doc, btn);
+	if (!session) return;
+	setButtonState(btn, true);
+	enqueue(session, async () => {
+		if (!live(session)) return;
+		if (session.kind === "dom") {
+			if (Number.isInteger(where.section)) session.section = where.section;
+			const units = domUnitsAt(session, session.section);
+			if (!units.length) return;
+			session.unitIndex = Math.min(Math.max(0, where.unit | 0), units.length - 1);
+			paintDom(session, false);
+			return;
+		}
+		const page = Math.max(0, where.page | 0);
+		const units = await unitsAt(session, page);
+		if (!live(session) || !units.length) return;
+		session.pageIndex = page;
+		session.unitIndex = Math.min(Math.max(0, where.unit | 0), units.length - 1);
+		paint(session, false);
+		prefetch(session);
+	});
+}
+
 // --- plugin entry points ---------------------------------------------------
 
 // Closing a reader tab fires no event we can hang a teardown on, so sessions
@@ -5429,12 +5540,15 @@ function renderButton(event) {
 	sweepClosedReaders();
 	const btn = doc.createElement("button");
 	btn.className = "toolbar-button";
+	btn.dataset.sfzButton = "1";       // so a second copy is not added beside it
 	btn.title = "Sentence focus — click to turn on, [ and ] to step, right-click for settings";
 	btn.append(rulerMark(doc));
 	btn.style.cssText = "cursor:pointer;background:none;border:none;display:flex;align-items:center;justify-content:center;";
 	const existing = sessions.get(reader);
 	if (existing) existing.btn = btn;      // the old toolbar went away with its tab
 	setButtonState(btn, !!existing);
+	// Where the ruler was when the plugin last stopped, if this is that tab.
+	const where = existing ? null : takeResume(reader);
 	btn.addEventListener("click", (e) => {
 		// Modifier-click opens the settings too: right-click is awkward on a
 		// trackpad, and this is the button people will already be aiming at.
@@ -5450,6 +5564,7 @@ function renderButton(event) {
 	sweepRefs(buttons);
 	if (typeof WeakRef === "function") buttons.add(new WeakRef(btn));
 	append(btn);
+	if (where) resumeSession(reader, doc, btn, where);
 }
 
 // What each preference costs to change. Style and colour are read on every
@@ -5464,7 +5579,7 @@ const PREF_EFFECT = {
 	mergeDisplay: "reanalyse",
 	autoScroll: "none", scrollMargin: "none", clickMoves: "none",
 	annotateKey: "none", annotateColor: "none", annotateType: "none", copyUnit: "none",
-	jumpKey: "none", countReading: "none",
+	jumpKey: "none", countReading: "none", resume: "none",
 };
 
 function applyPrefEffect(effect) {
@@ -5526,12 +5641,15 @@ function startup({ id, version: pluginVersion, rootURI }) {
 
 	onRenderToolbar = (event) => renderButton(event);
 	Zotero.Reader.registerEventListener("renderToolbar", onRenderToolbar, id);
+	// Tabs that were open before this copy of the plugin started.
+	refreshOpenToolbars();
 }
 
 function shutdown() {
 	stopped = true;
 	closeMenu();
 	closeAnnotate();
+	saveResume();
 	for (const reader of [...sessions.keys()]) stopSession(reader);
 	for (const ref of buttons) {
 		const el = ref.deref();
@@ -5572,6 +5690,6 @@ if (typeof module !== "undefined") {
 		blockText, textUnits, collectBlocks, blockUnits, domViewOf,
 		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
 		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
-		JUMP_KEYS, jumpKeyPressed,
+		JUMP_KEYS, jumpKeyPressed, sessions, saveResume, takeResume, RESUME_LIMIT,
 	};
 }

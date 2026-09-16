@@ -37,6 +37,10 @@ read in the tab, and can put the count back to zero.
 Zotero 7 or later. In Zotero 7 the highlight in books and web pages is drawn as
 boxes rather than as coloured text; everything else is the same.
 
+Updating the plugin does not need the open tabs to be closed and opened again:
+the button goes straight back into the toolbars that are already there, and
+each ruler comes back on the sentence it was left on.
+
 ## What makes it different
 
 A sentence rarely fits on one line. In a paper it wraps over four lines, crosses

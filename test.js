@@ -30,6 +30,7 @@ const {
 	blockText, collectBlocks, blockUnits,
 	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed,
+	sessions, saveResume, takeResume, RESUME_LIMIT,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -1780,6 +1781,44 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	prefs["extensions.zotero.sentenceFocus.countReading"] = true;
 	countRead(tab);
 	assert.strictEqual(el.textContent, "1 sentence read in this tab", "and it resumes where it left off");
+	delete global.Zotero;
+}
+
+// Updating the plugin stops it while the tabs stay open, so where each ruler
+// was is written down and read back once, per attachment.
+{
+	const prefs = {};
+	global.Zotero = {
+		debug: () => {},
+		Prefs: { get: (key) => prefs[key], set: (key, v) => { prefs[key] = v; }, clear: (key) => { delete prefs[key]; } },
+	};
+	const KEY = "extensions.zotero.sentenceFocus.resume";
+	const paper = { itemID: 7 }, book = { itemID: 9 }, unread = { itemID: 11 };
+	sessions.set(paper, { kind: "pdf", pageIndex: 12, unitIndex: 4 });
+	sessions.set(book, { kind: "dom", section: 3, unitIndex: 21 });
+	saveResume();
+	assert.deepStrictEqual(JSON.parse(prefs[KEY]), {
+		7: { kind: "pdf", page: 12, unit: 4 },
+		9: { kind: "dom", section: 3, unit: 21 },
+	});
+
+	assert.strictEqual(takeResume(unread), null, "a tab that was not open resumes nothing");
+	assert.deepStrictEqual(takeResume(paper), { kind: "pdf", page: 12, unit: 4 });
+	assert.strictEqual(takeResume(paper), null, "and is put back only once");
+	assert.deepStrictEqual(takeResume(book), { kind: "dom", section: 3, unit: 21 });
+	assert.strictEqual(prefs[KEY], "", "nothing left to resume is nothing stored");
+
+	// Whatever is on screen is worth keeping; a library's worth of old tabs is not.
+	sessions.clear();
+	for (let i = 0; i < RESUME_LIMIT + 5; i++) sessions.set({ itemID: 100 + i }, { kind: "pdf", pageIndex: i, unitIndex: 0 });
+	saveResume();
+	assert.strictEqual(Object.keys(JSON.parse(prefs[KEY])).length, RESUME_LIMIT, "the list is capped");
+
+	// Rubbish in the pref is not a reason to fail to start.
+	prefs[KEY] = "{not json";
+	assert.strictEqual(takeResume(paper), null);
+
+	sessions.clear();
 	delete global.Zotero;
 }
 
