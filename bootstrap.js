@@ -3794,8 +3794,8 @@ function setButtonState(btn, on) {
 	if (!btn) return;
 	btn.setAttribute("aria-pressed", on ? "true" : "false");
 	btn.style.opacity = on ? "1" : ".65";
-	const badge = btn.querySelector && btn.querySelector("[data-sfz-counter=badge]");
-	if (badge) renderCounter(badge, Number(badge.textContent) || 0);
+	btn.title = `Sentence focus — click to turn ${on ? "off" : "on"}, `
+		+ "[ and ] to step, right-click for settings";
 }
 
 function toggle(reader, doc, btn) {
@@ -4988,13 +4988,13 @@ function placeAnnotate(doc, panel, rect) {
 //
 // Keyed weakly by the reader, so closing the tab takes its count with it —
 // nothing here holds a closed tab alive, and there is no teardown to forget.
-// Each count also holds, weakly, every place it is shown: the badge in the
-// corner of the tab's button, and the menu while it is open.
+// Each count also holds, weakly, where it is shown: the line in the tab's menu
+// while that menu is open. It is not on the button, where a number beside the
+// ¶ would be read as something to act on rather than something read.
 const readCounts = new WeakMap();   // reader -> { count, views: Set<WeakRef> }
-// Every button and badge this plugin has put on a toolbar, weakly, so that
-// shutdown can take them off again. A button left behind would go on starting
-// sessions in a module nothing can reach any more.
-const badges = new Set();
+// Every button this plugin has put on a toolbar, weakly, so that shutdown can
+// take them off again. A button left behind would go on starting sessions in a
+// module nothing can reach any more.
 const buttons = new Set();
 
 // Drop the references whose element has gone with its tab.
@@ -5025,9 +5025,7 @@ function eraseCount(reader) {
 }
 
 function showCount(reader, el) {
-	const ref = new WeakRef(el);
-	counterOf(reader).views.add(ref);
-	if (el.dataset.sfzCounter === "badge") { sweepRefs(badges); badges.add(ref); }
+	counterOf(reader).views.add(new WeakRef(el));
 	renderCounter(el, counterOf(reader).count);
 }
 
@@ -5038,7 +5036,6 @@ function renderCounters(reader) {
 		// Gone with its tab, or left behind when the toolbar was rebuilt.
 		if (!el || !el.isConnected || !el.ownerDocument.defaultView) {
 			counter.views.delete(ref);
-			badges.delete(ref);
 			continue;
 		}
 		renderCounter(el, counter.count);
@@ -5049,19 +5046,7 @@ function renderCounter(el, count) {
 	const g = granularity();
 	const noun = count === 1 ? g : g === "word" ? "words" : g === "line" ? "lines"
 		: g === "paragraph" ? "paragraphs" : "sentences";
-	if (el.dataset.sfzCounter === "badge") {
-		el.textContent = String(count);
-		// Not `hidden`: the reader's toolbar styles its children's display.
-		el.style.display = count === 0 ? "none" : "";
-		const btn = el.parentNode;
-		if (btn) {
-			const on = btn.getAttribute("aria-pressed") === "true";
-			btn.title = `Sentence focus — ${count} ${noun} read in this tab. `
-				+ (on ? "Click to turn off" : "Click to turn on") + ", [ and ] to step, right-click for settings";
-		}
-	} else {
-		el.textContent = `${count} ${noun} read in this tab`;
-	}
+	el.textContent = `${count} ${noun} read in this tab`;
 }
 
 // --- in-reader settings menu -----------------------------------------------
@@ -5378,17 +5363,6 @@ function renderButton(event) {
 		openMenu(doc, btn, reader);
 	});
 
-	// The count rides in the button's corner. The toolbar gives each element a
-	// plugin appends a slot of its own, so a sibling lands under the button
-	// rather than beside it; inside the button it takes no room at all, and
-	// clicks go straight through it to the button.
-	btn.style.position = "relative";
-	const badge = doc.createElement("span");
-	badge.dataset.sfzCounter = "badge";
-	badge.style.cssText = "position:absolute;right:0;bottom:1px;pointer-events:none;"
-		+ "font:600 8.5px/1 system-ui,sans-serif;font-variant-numeric:tabular-nums;opacity:.8;";
-	btn.append(badge);
-	showCount(reader, badge);
 	sweepRefs(buttons);
 	if (typeof WeakRef === "function") buttons.add(new WeakRef(btn));
 	append(btn);
@@ -5474,13 +5448,11 @@ function shutdown() {
 	closeMenu();
 	closeAnnotate();
 	for (const reader of [...sessions.keys()]) stopSession(reader);
-	for (const set of [badges, buttons]) {
-		for (const ref of set) {
-			const el = ref.deref();
-			if (el) try { el.remove(); } catch (e) { /* tab gone */ }
-		}
-		set.clear();
+	for (const ref of buttons) {
+		const el = ref.deref();
+		if (el) try { el.remove(); } catch (e) { /* tab gone */ }
 	}
+	buttons.clear();
 	dropInjectedStyles();
 	pageCache.clear();
 	for (const o of prefObservers) {

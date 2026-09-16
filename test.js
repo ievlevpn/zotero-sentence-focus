@@ -1738,33 +1738,31 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 
 // --- the reading counter -------------------------------------------------------
 
-// Each tab counts for itself, and every view of a tab's count follows it: the
-// badge beside its button and the line in its menu. A view that is gone is let
-// go of.
+// Each tab counts for itself, and every view of a tab's count follows it —
+// the line in its menu, once per menu that is open. A view that has gone with
+// its tab, or with a menu that was closed, is let go of.
 {
-	const view = (kind) => ({
-		dataset: { sfzCounter: kind }, textContent: "", style: { display: "" }, title: "",
+	const view = () => ({
+		textContent: "", style: {}, title: "",
 		isConnected: true, ownerDocument: { defaultView: {} },
 	});
 	const tabA = {}, tabB = {};
-	const badge = view("badge"), menu = view("menu"), stale = view("badge"), other = view("badge");
-	showCount(tabA, badge); showCount(tabA, menu); showCount(tabA, stale);
+	const menu = view(), second = view(), stale = view(), other = view();
+	showCount(tabA, menu); showCount(tabA, second); showCount(tabA, stale);
 	showCount(tabB, other);
-	assert.strictEqual(badge.style.display, "none", "nothing read yet: the badge stays out of the way");
+	assert.strictEqual(menu.textContent, "0 sentences read in this tab", "nothing read yet");
 	stale.isConnected = false;
 	countRead(tabA); countRead(tabA); countRead(tabA);
-	assert.strictEqual(badge.textContent, "3");
-	assert.strictEqual(badge.style.display, "");
 	assert.strictEqual(menu.textContent, "3 sentences read in this tab");
-	assert.strictEqual(stale.textContent, "0", "a badge from a rebuilt toolbar is no longer updated");
-	assert.strictEqual(other.textContent, "0", "another tab keeps its own count");
+	assert.strictEqual(second.textContent, "3 sentences read in this tab", "every open view follows");
+	assert.strictEqual(stale.textContent, "0 sentences read in this tab", "a closed menu is no longer updated");
+	assert.strictEqual(other.textContent, "0 sentences read in this tab", "another tab keeps its own count");
 	countRead(tabB);
-	assert.strictEqual(other.textContent, "1");
-	assert.strictEqual(badge.textContent, "3");
+	assert.strictEqual(other.textContent, "1 sentence read in this tab");
+	assert.strictEqual(menu.textContent, "3 sentences read in this tab");
 	eraseCount(tabA);
 	assert.strictEqual(menu.textContent, "0 sentences read in this tab");
-	assert.strictEqual(badge.style.display, "none", "erased: hidden again");
-	assert.strictEqual(other.textContent, "1", "erasing one tab leaves the other alone");
+	assert.strictEqual(other.textContent, "1 sentence read in this tab", "erasing one tab leaves the other alone");
 	countRead(tabA);
 	assert.strictEqual(menu.textContent, "1 sentence read in this tab");
 }

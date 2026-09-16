@@ -29,8 +29,8 @@ and `n` marks it and opens Zotero's own popup for a comment and tags.
 
 Right-click **¶** for the settings — step size, colour, highlight style,
 scrolling, the annotating shortcut — which are also under
-**Zotero → Settings → Sentence Focus**. A small
-number on the button counts what you have read in that tab.
+**Zotero → Settings → Sentence Focus**. That menu also counts what you have
+read in the tab, and can put the count back to zero.
 
 Zotero 7 or later. In Zotero 7 the highlight in books and web pages is drawn as
 boxes rather than as coloured text; everything else is the same.

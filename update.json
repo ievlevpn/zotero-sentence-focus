@@ -3,8 +3,8 @@
     "sentence-focus@local": {
       "updates": [
         {
-          "version": "0.29.0",
-          "update_link": "https://github.com/ievlevpn/zotero-sentence-focus/releases/download/v0.29.0/sentence-focus.xpi",
+          "version": "0.29.1",
+          "update_link": "https://github.com/ievlevpn/zotero-sentence-focus/releases/download/v0.29.1/sentence-focus.xpi",
           "applications": {
             "zotero": {
               "strict_min_version": "6.999",
