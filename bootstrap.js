@@ -33,6 +33,8 @@ const DEFAULTS = {
 	annotateColor: "#ffd400",    // last colour used for an annotation
 	annotateType: "highlight",   // highlight | underline
 	copyUnit: true,              // Cmd/Ctrl-C copies the step when nothing is selected
+	jumpKey: "alt-j",            // alt-j | backslash | off
+	countReading: true,          // keep a count of what has been read in a tab
 };
 
 function pref(key) {
@@ -3319,7 +3321,7 @@ function padBoxes(boxes, em, isDisplay, scale) {
 // may touch the page afterwards.
 const live = (session) => !!session && sessions.get(session.reader) === session;
 
-function paint(session, scroll) {
+function paint(session, scroll, insist) {
 	if (!live(session)) return;
 	clearPaint(session);
 	const v = viewerOf(session.reader);
@@ -3364,7 +3366,7 @@ function paint(session, scroll) {
 	pv.div.append(layer);
 	session.painted.push(layer);
 
-	if (scroll) ensureVisible(v, pv, unit);
+	if (scroll) ensureVisible(v, pv, unit, insist);
 }
 
 function drawHighlight(doc, svg, style, boxes, color, pageHeight) {
@@ -3525,8 +3527,10 @@ function unitClientBox(pv, unit) {
 // reading ruler is for, so the default only scrolls when the unit has gone off
 // screen entirely. When it does scroll it leaves a margin above: landing a
 // sentence flush against the top edge gives the eye nothing to lead into.
-function ensureVisible(v, pv, unit) {
-	const mode = String(pref("autoScroll"));
+function ensureVisible(v, pv, unit, insist) {
+	// `insist` is the jump key: it scrolls whatever the setting says, because
+	// being asked to go to the ruler is not the same as following it.
+	const mode = insist ? "always" : String(pref("autoScroll"));
 	if (mode === "never") return;
 	const container = v.doc.getElementById("viewerContainer");
 	if (!container) return;
@@ -3679,6 +3683,12 @@ function sessionKey(session, e, step) {
 		return;
 	}
 	if (annotateOpenFor(session)) return;
+	if (jumpKeyPressed(e)) {
+		e.preventDefault();
+		e.stopPropagation();
+		enqueue(session, () => jumpToMark(session));
+		return;
+	}
 	if (copyKeyPressed(e)) {
 		// Only when it copied something: with nothing to copy the key is the
 		// reader's, and taking it would break copying from the sidebar.
@@ -4161,7 +4171,7 @@ function reanchorDom(session, was) {
 	paintDom(session, false);
 }
 
-function paintDom(session, scroll) {
+function paintDom(session, scroll, insist) {
 	const dv = domViewOf(session.reader);
 	if (!dv) { stopSession(session.reader); return; }
 	const units = domUnitsAt(session, session.section);
@@ -4170,7 +4180,7 @@ function paintDom(session, scroll) {
 	if (!unit) return;
 	let range;
 	try { range = rangeOf(dv.doc, unit); } catch (e) { return; }
-	if (scroll) revealDom(dv, range);
+	if (scroll) revealDom(dv, range, insist);
 	const registry = dv.win.CSS && dv.win.CSS.highlights;
 	if (!registry || typeof dv.win.Highlight !== "function") {
 		paintDomBoxes(session, dv, range);
@@ -4192,8 +4202,8 @@ function paintDom(session, scroll) {
 
 // The view knows how to bring a range into sight in either of its layouts —
 // turning to the right page, or scrolling — so it is asked to.
-function revealDom(dv, range) {
-	const mode = String(pref("autoScroll"));
+function revealDom(dv, range, insist) {
+	const mode = insist ? "always" : String(pref("autoScroll"));
 	const flow = dv.view.flow;
 	const section = sectionIndexOf(dv, range.startContainer);
 	const renderer = dv.view.renderers && dv.view.renderers[section];
@@ -4377,7 +4387,7 @@ function keyLabel(spec) {
 	if (spec.mod) s += mac ? "⌘" : "Ctrl+";
 	if (spec.shift) s += mac ? "⇧" : "Shift+";
 	if (spec.alt) s += mac ? "⌥" : "Alt+";
-	return s + spec.code.replace(/^Key/, "");
+	return s + (spec.code === "Backslash" ? "\\" : spec.code.replace(/^Key/, ""));
 }
 
 function annotateKeySpec() {
@@ -4388,15 +4398,18 @@ function annotateKeySpec() {
 
 // The one modifier that means "the application's own shortcut" is Cmd on a
 // Mac and Ctrl everywhere else; the other one must be up, or Ctrl-Cmd-Shift-H
-// would fire this as well.
-function annotateKeyPressed(e) {
-	const spec = annotateKeySpec();
+// would fire a chord meant for Cmd-Shift-H as well.
+function chordPressed(e, spec) {
 	if (!spec) return false;
 	const mac = onMac();
 	const mod = mac ? e.metaKey : e.ctrlKey;
 	const other = mac ? e.ctrlKey : e.metaKey;
 	return e.code === spec.code && !!mod === spec.mod && !other
 		&& !!e.shiftKey === spec.shift && !!e.altKey === spec.alt;
+}
+
+function annotateKeyPressed(e) {
+	return chordPressed(e, annotateKeySpec());
 }
 
 // The reader copies a selection with Cmd/Ctrl-C and does nothing with the key
@@ -4457,6 +4470,44 @@ function flash(session, text, rect) {
 		el.classList.add("sfz-gone");
 		win.setTimeout(() => { try { el.remove(); } catch (e) { /* its document went */ } }, 300);
 	}, 750);
+}
+
+// Scrolling away from the ruler is easy — a page turn, a look at a figure, a
+// jump from the sidebar. This brings the page back to wherever the ruler was
+// left, without moving it. Alt/Option with a letter is free in the reader, and
+// the bare backslash is there for keyboards where Alt-J is awkward.
+const JUMP_KEYS = [
+	["alt-j", { code: "KeyJ", mod: false, shift: false, alt: true }],
+	["backslash", { code: "Backslash", mod: false, shift: false, alt: false }],
+	["off", null],
+];
+
+function jumpKeySpec() {
+	const want = String(pref("jumpKey"));
+	const found = JUMP_KEYS.find(([value]) => value === want);
+	return (found || JUMP_KEYS[0])[1];
+}
+
+function jumpKeyPressed(e) {
+	return chordPressed(e, jumpKeySpec());
+}
+
+// Bringing the ruler back into sight is a paint with the scroll insisted on:
+// it never moves the ruler, so the sentence you were reading is still the one
+// marked when the page settles.
+function jumpToMark(session) {
+	if (session.kind === "dom") { paintDom(session, true, true); return; }
+	const v = viewerOf(session.reader);
+	if (!v) return;
+	// A ruler pages away may be outside what pdf.js keeps rendered; asking the
+	// viewer for its page first puts the page in view, then the paint places
+	// the sentence within it.
+	try {
+		if (v.viewer.currentPageNumber !== session.pageIndex + 1) {
+			v.viewer.currentPageNumber = session.pageIndex + 1;
+		}
+	} catch (e) { /* the viewer is between documents */ }
+	paint(session, true, true);
 }
 
 // Zotero's eight annotation colours, in Zotero's order, so the digits here
@@ -5016,6 +5067,7 @@ function counterOf(reader) {
 }
 
 function countRead(reader) {
+	if (!pref("countReading")) return;
 	counterOf(reader).count++;
 	renderCounters(reader);
 }
@@ -5154,8 +5206,8 @@ function buildMenu(doc, reader) {
 		panel.append(row);
 	};
 
-	heading("Reading");
-	{
+	if (pref("countReading")) {
+		heading("Reading");
 		const row = make("div", "sfz-row");
 		const count = make("span", "sfz-count");
 		count.dataset.sfzCounter = "menu";
@@ -5208,6 +5260,11 @@ function buildMenu(doc, reader) {
 		["mod-click", `${onMac() ? "⌘" : "Ctrl"}-click moves it`, "Only a modified click moves the ruler; a plain click is the reader's own."],
 		["off", "Does nothing", "The ruler is moved by the keys alone."],
 	]);
+
+	heading("Back to the ruler");
+	chips("jumpKey", JUMP_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
+		? `Press ${keyLabel(spec)} to scroll back to the sentence the ruler is on, without moving it.`
+		: "No shortcut; nothing listens for one."]));
 
 	heading("Annotate with");
 	chips("annotateKey", ANNOTATE_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
@@ -5407,6 +5464,7 @@ const PREF_EFFECT = {
 	mergeDisplay: "reanalyse",
 	autoScroll: "none", scrollMargin: "none", clickMoves: "none",
 	annotateKey: "none", annotateColor: "none", annotateType: "none", copyUnit: "none",
+	jumpKey: "none", countReading: "none",
 };
 
 function applyPrefEffect(effect) {
@@ -5514,5 +5572,6 @@ if (typeof module !== "undefined") {
 		blockText, textUnits, collectBlocks, blockUnits, domViewOf,
 		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
 		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
+		JUMP_KEYS, jumpKeyPressed,
 	};
 }

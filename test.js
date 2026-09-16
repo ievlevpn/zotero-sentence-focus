@@ -29,7 +29,7 @@ const {
 	countRead, eraseCount, showCount,
 	blockText, collectBlocks, blockUnits,
 	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
-	copyKeyPressed, CLICK_MODES,
+	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -1767,6 +1767,22 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.strictEqual(menu.textContent, "1 sentence read in this tab");
 }
 
+// Counting can be turned off, and then nothing is counted — not even while a
+// menu that was opened earlier is still showing the old total.
+{
+	const prefs = { "extensions.zotero.sentenceFocus.countReading": false };
+	global.Zotero = { Prefs: { get: (key) => prefs[key] } };
+	const el = { textContent: "", style: {}, isConnected: true, ownerDocument: { defaultView: {} } };
+	const tab = {};
+	showCount(tab, el);
+	countRead(tab); countRead(tab);
+	assert.strictEqual(el.textContent, "0 sentences read in this tab", "nothing is counted when counting is off");
+	prefs["extensions.zotero.sentenceFocus.countReading"] = true;
+	countRead(tab);
+	assert.strictEqual(el.textContent, "1 sentence read in this tab", "and it resumes where it left off");
+	delete global.Zotero;
+}
+
 // --- a table whose cells wrap ------------------------------------------------
 
 // A table introduced by a colon, with cells long enough to wrap onto a second
@@ -2971,6 +2987,24 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.ok(!copyKeyPressed(key({ ctrlKey: true, metaKey: true })), "nor both modifiers at once");
 	assert.ok(!copyKeyPressed(key({})), "and a bare C types a C");
 	assert.ok(!copyKeyPressed(key({ ctrlKey: true, code: "KeyV" })), "paste is not copy");
+}
+
+// The key that brings the page back to the ruler. Alt/Option+J by default,
+// and the pane offers what the plugin knows.
+{
+	const key = (over) => Object.assign({ code: "KeyJ", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }, over);
+	assert.ok(jumpKeyPressed(key({ altKey: true })), "the jump key fires");
+	assert.ok(!jumpKeyPressed(key({})), "a bare J types a J");
+	assert.ok(!jumpKeyPressed(key({ altKey: true, shiftKey: true })), "Shift makes it another chord");
+	assert.ok(!jumpKeyPressed(key({ code: "KeyH", altKey: true })), "and Alt+H is the annotating key");
+	assert.strictEqual(keyLabel(JUMP_KEYS[1][1]), "\\", "the bare backslash is shown as itself");
+
+	const pane = require("fs").readFileSync("prefs.xhtml", "utf8");
+	const options = /id="sf-jump-key">([\s\S]*?)<\/html:select>/.exec(pane);
+	assert.ok(options, "the jump menu is in the Settings pane");
+	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
+	assert.deepStrictEqual(offered, JUMP_KEYS.map(([value]) => value),
+		"Settings offers the same shortcuts the reader menu does");
 }
 
 // The reader menu and the Settings pane offer the same three click modes.

@@ -8,7 +8,8 @@ line at a time. It works in PDFs, EPUBs and saved web pages.
 Press `]` to step forward, `[` to step back, or click a sentence to jump to it
 (clicking can be set to need `⌘`/`Ctrl`, or to do nothing at all). You can also
 step by word, line or paragraph, and `⌘`/`Ctrl`+`C` copies the sentence you are
-on when nothing is selected.
+on when nothing is selected. If you have scrolled off somewhere else,
+`Option+J` (`Alt+J`) brings the page back to the ruler without moving it.
 
 Press `Option+H` (`Alt+H`) to keep what you are reading: the sentence under the
 ruler — or whatever you have selected — becomes a Zotero highlight or underline.
