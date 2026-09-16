@@ -4575,16 +4575,46 @@ function createAnnotation(session, target, type, color, withNote) {
 	if (!annotation) return null;
 	const saved = manager.addAnnotation(target.built ? cloneForReader(reader, annotation) : annotation);
 	if (!saved) return null;
-	if (withNote) {
+	if (withNote) openNotePane(reader, saved);
+	return saved;
+}
+
+// Selecting the new annotation is what shows Zotero's own popup for a comment
+// and tags — and, when the sidebar is open, focuses the comment box there
+// instead. Two things this has to get right:
+//
+//  * the list of ids crosses into the reader's window, so it has to be cloned;
+//    a chrome array reaches content as an opaque wrapper and `ids.length`
+//    throws inside the reader, which left the annotation made and no popup.
+//  * selecting closes any open popup as part of the render that follows, so
+//    asking for the popup in the same tick has it closed again a moment later.
+//    It is asked for after that render, and only while the annotation is still
+//    the selected one.
+function openNotePane(reader, annotation) {
+	const id = annotation && annotation.id;
+	if (!id) return;
+	const inner = reader._internalReader;
+	const win = reader._iframeWindow;
+	try {
+		inner.setSelectedAnnotations(cloneForReader(reader, [id]), true);
+	} catch (e) {
+		Zotero.debug("Sentence Focus: could not select the new annotation - " + e);
+		return;
+	}
+	const open = () => {
 		try {
-			reader._internalReader.setSelectedAnnotations([saved.id], true);
-			const view = reader._internalReader._primaryView;
-			if (view && view._openAnnotationPopup) view._openAnnotationPopup();
+			const view = inner._primaryView;
+			const selected = view && view.selectedAnnotationIDs;
+			if (!view || !view._openAnnotationPopup) return;
+			if (selected && selected.length === 1 && selected[0] !== id) return;
+			view._openAnnotationPopup();
 		} catch (e) {
 			Zotero.debug("Sentence Focus: could not open the annotation popup - " + e);
 		}
-	}
-	return saved;
+	};
+	// The reader's own window, so the timer dies with the tab.
+	if (win && win.setTimeout) win.setTimeout(open, 80);
+	else open();
 }
 
 const ANNOTATE_CSS = `
@@ -4711,7 +4741,7 @@ function openAnnotate(session) {
 	for (const [value, label] of ANNOTATION_TYPES) {
 		const b = make("button", null, label);
 		b.dataset.type = value;
-		b.title = `${label} (${label[0]})`;
+		b.title = `${label} (${label[0].toLowerCase()})`;
 		b.addEventListener("click", () => { state.type = value; showType(); });
 		seg.append(b);
 	}
@@ -4743,7 +4773,7 @@ function openAnnotate(session) {
 	const acts = make("div", "sfz-acts");
 	primary.addEventListener("click", () => apply(false));
 	const noteBtn = make("button", "sfz-act", "Add note…");
-	noteBtn.title = "Make the annotation and open Zotero's popup for a comment and tags.";
+	noteBtn.title = "Make the annotation and open Zotero's popup for a comment and tags (n).";
 	noteBtn.addEventListener("click", () => apply(true));
 	acts.append(primary, noteBtn);
 	if (!blocked) { panel.append(acts); panel.append(note); }
@@ -4753,10 +4783,10 @@ function openAnnotate(session) {
 	else hint.append(
 		make("kbd", null, "1"), doc.createTextNode("–"), make("kbd", null, "8"),
 		doc.createTextNode(" colour · "),
-		make("kbd", null, "H"), doc.createTextNode("/"), make("kbd", null, "U"),
+		make("kbd", null, "h"), doc.createTextNode("/"), make("kbd", null, "u"),
 		doc.createTextNode(" kind · "),
 		make("kbd", null, "↵"), doc.createTextNode(" mark · "),
-		make("kbd", null, "N"), doc.createTextNode(" note"),
+		make("kbd", null, "n"), doc.createTextNode(" note"),
 	);
 	panel.append(hint);
 	showType();
