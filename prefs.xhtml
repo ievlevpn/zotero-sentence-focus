@@ -104,9 +104,19 @@
 			modifier instead if the ruler keeps landing somewhere you did not mean.</html:p>
 	</groupbox>
 	<groupbox>
-		<html:h2>Finding the ruler</html:h2>
+		<html:h2>The ruler</html:h2>
 		<html:div class="sf-grid">
-			<html:label for="sf-jump-key">Shortcut</html:label>
+			<html:label for="sf-toggle-key">Turn on and off</html:label>
+			<html:select id="sf-toggle-key">
+				<html:option value="alt-r">Option/Alt + R</html:option>
+				<html:option value="off">Off</html:option>
+			</html:select>
+		</html:div>
+		<html:p class="sf-hint">The same as clicking the ruler button, without reaching for
+			it. It answers whether or not the ruler is running, so it is the one shortcut
+			that has no second choice.</html:p>
+		<html:div class="sf-grid">
+			<html:label for="sf-jump-key">Find it again</html:label>
 			<html:select id="sf-jump-key">
 				<html:option value="alt-j">Option/Alt + J</html:option>
 				<html:option value="backslash">Backslash</html:option>

@@ -34,6 +34,7 @@ const DEFAULTS = {
 	annotateType: "highlight",   // highlight | underline
 	copyUnit: true,              // Cmd/Ctrl-C copies the step when nothing is selected
 	jumpKey: "alt-j",            // alt-j | backslash | off
+	toggleKey: "alt-r",          // alt-r | off
 	countReading: true,          // keep a count of what has been read in a tab
 	resume: "",                  // where the ruler was when the plugin last stopped
 };
@@ -4511,6 +4512,84 @@ function jumpToMark(session) {
 	paint(session, true, true);
 }
 
+// Turning the ruler on and off without reaching for the toolbar. Alt/Option-R
+// for the ruler; there is no second choice because the key has to be listened
+// for whether or not the ruler is running, and two keys that could be set to
+// the same chord would both answer it.
+const TOGGLE_KEYS = [
+	["alt-r", { code: "KeyR", mod: false, shift: false, alt: true }],
+	["off", null],
+];
+
+function toggleKeySpec() {
+	const want = String(pref("toggleKey"));
+	const found = TOGGLE_KEYS.find(([value]) => value === want);
+	return (found || TOGGLE_KEYS[0])[1];
+}
+
+function toggleKeyPressed(e) {
+	return chordPressed(e, toggleKeySpec());
+}
+
+// The step keys belong to a running ruler and are taken down with it. This one
+// has to answer when there is no ruler at all, so it is listened for from the
+// moment the tab has a button. Both of the tab's documents get the listener:
+// the toolbar's, and the one the pages are in, because a key lands in whichever
+// has the focus. The second arrives with the document being opened, which can
+// be later than the toolbar, so it is waited for.
+const keyWatched = new WeakSet();
+let keyWatchOffs = [];
+
+function watchToggleKey(reader, doc) {
+	if (keyWatched.has(reader)) return;
+	keyWatched.add(reader);
+	const seen = new Set();
+	const onKey = (e) => {
+		if (!toggleKeyPressed(e) || isTypingTarget(e.target)) return;
+		// While the annotating panel is open the keyboard is its own.
+		if (annotatePanel && annotatePanel.reader === reader) return;
+		e.preventDefault();
+		e.stopPropagation();
+		toggleFromKey(reader);
+	};
+	const attach = (d) => {
+		if (!d || seen.has(d)) return;
+		seen.add(d);
+		d.addEventListener("keydown", onKey, true);
+		const off = () => { try { d.removeEventListener("keydown", onKey, true); } catch (e) { /* gone */ } };
+		keyWatchOffs.push(off);
+		const win = d.defaultView;
+		if (win) win.addEventListener("unload", off, { once: true });
+	};
+	attach(doc);
+	// The view's document, as soon as there is one. Tried for a few seconds and
+	// then left: a tab that never opens a document has no keys to catch.
+	const win = doc.defaultView;
+	let tries = 0;
+	const findView = () => {
+		const v = viewerOf(reader) || domViewOf(reader);
+		if (v && v.doc) { attach(v.doc); return; }
+		if (++tries < 10 && win) win.setTimeout(findView, 800);
+	};
+	findView();
+}
+
+function buttonOf(reader) {
+	const session = sessions.get(reader);
+	if (session && session.btn && session.btn.isConnected) return session.btn;
+	const holder = toolbarSection(reader);
+	return (holder && holder.querySelector("[data-sfz-button]")) || null;
+}
+
+function toggleFromKey(reader) {
+	const btn = buttonOf(reader);
+	let doc = btn && btn.ownerDocument;
+	if (!doc) {
+		try { doc = reader._iframeWindow.document; } catch (e) { return; }
+	}
+	toggle(reader, doc, btn);
+}
+
 // Zotero's eight annotation colours, in Zotero's order, so the digits here
 // pick the same colour the reader's own Alt-1..8 do.
 const ANNOTATION_COLORS = [
@@ -5262,6 +5341,11 @@ function buildMenu(doc, reader) {
 		["off", "Does nothing", "The ruler is moved by the keys alone."],
 	]);
 
+	heading("Turn the ruler on and off with");
+	chips("toggleKey", TOGGLE_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
+		? `Press ${keyLabel(spec)} instead of clicking the button.`
+		: "No shortcut; the button turns it on and off."]));
+
 	heading("Back to the ruler");
 	chips("jumpKey", JUMP_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
 		? `Press ${keyLabel(spec)} to scroll back to the sentence the ruler is on, without moving it.`
@@ -5564,6 +5648,7 @@ function renderButton(event) {
 	sweepRefs(buttons);
 	if (typeof WeakRef === "function") buttons.add(new WeakRef(btn));
 	append(btn);
+	watchToggleKey(reader, doc);
 	if (where) resumeSession(reader, doc, btn, where);
 }
 
@@ -5579,7 +5664,7 @@ const PREF_EFFECT = {
 	mergeDisplay: "reanalyse",
 	autoScroll: "none", scrollMargin: "none", clickMoves: "none",
 	annotateKey: "none", annotateColor: "none", annotateType: "none", copyUnit: "none",
-	jumpKey: "none", countReading: "none", resume: "none",
+	jumpKey: "none", toggleKey: "none", countReading: "none", resume: "none",
 };
 
 function applyPrefEffect(effect) {
@@ -5656,6 +5741,8 @@ function shutdown() {
 		if (el) try { el.remove(); } catch (e) { /* tab gone */ }
 	}
 	buttons.clear();
+	for (const off of keyWatchOffs) off();
+	keyWatchOffs = [];
 	dropInjectedStyles();
 	pageCache.clear();
 	for (const o of prefObservers) {
@@ -5690,6 +5777,7 @@ if (typeof module !== "undefined") {
 		blockText, textUnits, collectBlocks, blockUnits, domViewOf,
 		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
 		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
-		JUMP_KEYS, jumpKeyPressed, sessions, saveResume, takeResume, RESUME_LIMIT,
+		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
+		sessions, saveResume, takeResume, RESUME_LIMIT,
 	};
 }

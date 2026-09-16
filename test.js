@@ -29,7 +29,7 @@ const {
 	countRead, eraseCount, showCount,
 	blockText, collectBlocks, blockUnits,
 	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
-	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed,
+	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 	sessions, saveResume, takeResume, RESUME_LIMIT,
 } = require("./bootstrap.js");
 
@@ -3044,6 +3044,27 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
 	assert.deepStrictEqual(offered, JUMP_KEYS.map(([value]) => value),
 		"Settings offers the same shortcuts the reader menu does");
+}
+
+// The key that turns the ruler on and off. It is listened for whether or not
+// the ruler is running, so it must not be a chord any other key could be set
+// to — hence the single choice.
+{
+	const key = (over) => Object.assign({ code: "KeyR", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }, over);
+	assert.ok(toggleKeyPressed(key({ altKey: true })), "the toggle key fires");
+	assert.ok(!toggleKeyPressed(key({})), "a bare R types an R");
+	assert.ok(!toggleKeyPressed(key({ altKey: true, metaKey: true })), "Cmd+Alt+R is something else");
+	assert.deepStrictEqual(TOGGLE_KEYS.map(([value]) => value), ["alt-r", "off"]);
+	// No chord is offered by two of the shortcut settings at once.
+	const chords = [...TOGGLE_KEYS, ...JUMP_KEYS, ...ANNOTATE_KEYS]
+		.map(([, spec]) => spec && `${spec.code}/${spec.mod}/${spec.shift}/${spec.alt}`).filter(Boolean);
+	assert.strictEqual(new Set(chords).size, chords.length, "no two shortcut settings offer the same chord");
+
+	const pane = require("fs").readFileSync("prefs.xhtml", "utf8");
+	const options = /id="sf-toggle-key">([\s\S]*?)<\/html:select>/.exec(pane);
+	assert.ok(options, "the toggle menu is in the Settings pane");
+	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
+	assert.deepStrictEqual(offered, TOGGLE_KEYS.map(([value]) => value));
 }
 
 // The reader menu and the Settings pane offer the same three click modes.
