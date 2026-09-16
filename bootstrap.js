@@ -4990,7 +4990,8 @@ function placeAnnotate(doc, panel, rect) {
 // nothing here holds a closed tab alive, and there is no teardown to forget.
 // Each count also holds, weakly, where it is shown: the line in the tab's menu
 // while that menu is open. It is not on the button, where a number beside the
-// ¶ would be read as something to act on rather than something read.
+// a number beside it would be read as something to act on rather than
+// something read.
 const readCounts = new WeakMap();   // reader -> { count, views: Set<WeakRef> }
 // Every button this plugin has put on a toolbar, weakly, so that shutdown can
 // take them off again. A button left behind would go on starting sessions in a
@@ -5224,7 +5225,7 @@ function buildMenu(doc, reader) {
 		doc.createTextNode("Step with "),
 		make("kbd", null, "["), doc.createTextNode(" and "), make("kbd", null, "]"),
 		...(spec ? [doc.createTextNode(", annotate with "), make("kbd", null, keyLabel(spec))] : []),
-		doc.createTextNode(". Right-click the ¶ button for this menu."),
+		doc.createTextNode(". Right-click the ruler button for this menu."),
 		make("span", "sfz-version", version ? ` v${version}` : ""),
 	);
 	panel.append(foot);
@@ -5340,14 +5341,40 @@ function sweepClosedReaders() {
 	}
 }
 
+// The toolbar mark: a band over the line it covers, the full stop that ends
+// that line, and the rest of the paragraph left pale around it. Drawn rather
+// than written, and in `currentColor`, so it follows the reader's theme the
+// way Zotero's own toolbar icons do.
+function rulerMark(doc) {
+	const svg = doc.createElementNS(SVG_NS, "svg");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("width", "16");
+	svg.setAttribute("height", "16");
+	svg.setAttribute("fill", "none");
+	svg.setAttribute("aria-hidden", "true");
+	svg.style.display = "block";
+	const shape = (name, attrs) => {
+		const el = doc.createElementNS(SVG_NS, name);
+		for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+		el.setAttribute("fill", "currentColor");
+		svg.append(el);
+	};
+	shape("rect", { x: 2, y: 2.6, width: 12, height: 1.5, rx: 0.75, opacity: 0.38 });
+	shape("rect", { x: 1.2, y: 6, width: 13.6, height: 4.6, rx: 1.4, opacity: 0.22 });
+	shape("rect", { x: 2.8, y: 7.5, width: 7.4, height: 1.7, rx: 0.85 });
+	shape("circle", { cx: 12.3, cy: 8.35, r: 1 });
+	shape("rect", { x: 2, y: 12.4, width: 7.5, height: 1.5, rx: 0.75, opacity: 0.38 });
+	return svg;
+}
+
 function renderButton(event) {
 	const { reader, doc, append } = event;
 	sweepClosedReaders();
 	const btn = doc.createElement("button");
 	btn.className = "toolbar-button";
 	btn.title = "Sentence focus — click to turn on, [ and ] to step, right-click for settings";
-	btn.textContent = "¶";
-	btn.style.cssText = "font-size:15px;cursor:pointer;background:none;border:none;";
+	btn.append(rulerMark(doc));
+	btn.style.cssText = "cursor:pointer;background:none;border:none;display:flex;align-items:center;justify-content:center;";
 	const existing = sessions.get(reader);
 	if (existing) existing.btn = btn;      // the old toolbar went away with its tab
 	setButtonState(btn, !!existing);

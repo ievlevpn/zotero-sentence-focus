@@ -25,9 +25,10 @@ and `n` marks it and opens Zotero's own popup for a comment and tags.
    [Releases](https://github.com/ievlevpn/zotero-sentence-focus/releases).
 2. In Zotero: **Tools → Add-ons → ⚙ → Install Add-on From File…** and pick the
    file.
-3. Open a document and click the **¶** button in the reader's toolbar.
+3. Open a document and click the **ruler** button in the reader's toolbar (the
+   striped mark with one line picked out).
 
-Right-click **¶** for the settings — step size, colour, highlight style,
+Right-click it for the settings — step size, colour, highlight style,
 scrolling, the annotating shortcut — which are also under
 **Zotero → Settings → Sentence Focus**. That menu also counts what you have
 read in the tab, and can put the count back to zero.

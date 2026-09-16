@@ -1,8 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
-  <rect x="2.5" y="4" width="19" height="2" rx="1" fill="currentColor" opacity=".35"/>
-  <rect x="2.5" y="9" width="19" height="6" rx="1.5" fill="currentColor" opacity=".22"/>
-  <rect x="4" y="10.5" width="12" height="1.6" rx=".8" fill="currentColor"/>
-  <rect x="4" y="13" width="8" height="1.6" rx=".8" fill="currentColor"/>
-  <circle cx="14.2" cy="13.8" r="1" fill="currentColor"/>
-  <rect x="2.5" y="18" width="19" height="2" rx="1" fill="currentColor" opacity=".35"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- A sentence under the ruler: the band, the line it covers, and the full
+       stop that ends it. The lines above and below are the rest of the
+       paragraph, which the ruler is not on. -->
+  <rect x="3" y="3.6" width="18" height="2" rx="1" fill="#9aa0a6"/>
+  <rect x="1.8" y="8.4" width="20.4" height="7.2" rx="2.2" fill="#ffd23f"/>
+  <rect x="4" y="11" width="11" height="2" rx="1" fill="#3b3f45"/>
+  <circle cx="17.4" cy="12" r="1.25" fill="#3b3f45"/>
+  <rect x="3" y="18.4" width="11" height="2" rx="1" fill="#9aa0a6"/>
 </svg>
