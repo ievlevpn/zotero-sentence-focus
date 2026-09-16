@@ -66,5 +66,8 @@
 	if (!ready()) {
 		const observer = new MutationObserver(() => { if (ready()) observer.disconnect(); });
 		observer.observe(document.documentElement, { childList: true, subtree: true });
+		// A pane that never arrives — the window was closed while it loaded —
+		// must not leave a watcher on the document for the rest of the session.
+		if (typeof window !== "undefined") window.addEventListener("unload", () => observer.disconnect(), { once: true });
 	}
 }

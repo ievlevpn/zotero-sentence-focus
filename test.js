@@ -2866,4 +2866,67 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.strictEqual(splitSentences(ref, [], []).length, 2, "a sentence may still open with Fig. 7");
 }
 
+// --- what the audit turned up ----------------------------------------------
+
+// A line broken at a hyphen carries the break on the hyphen, which is dropped
+// from the text; the highlight must still stop at the end of the line.
+{
+	const PAGE = [0, 0, 612, 792];
+	const units = segmentPage(layout([
+		{ text: "Other notable differentiating characteristics of the method are listed", x: 72, y: 200, size: 10 },
+		{ text: "below, where each one is described in turn and compared with the differ", x: 72, y: 188, size: 10, hyphen: true },
+		{ text: "ent baselines that the literature offers for this particular task.", x: 412, y: 700, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const rects = units[0].rects;
+	assert.ok(rects.every((r) => r[3] - r[1] < 40), `a hyphen at a line break is not a box over the whole page: ${JSON.stringify(rects)}`);
+	assert.strictEqual(rects.length, 3, "one box a line");
+}
+
+// A tall inline fraction on one line reaches down into the band of the next;
+// the two are still two lines, and their words keep the space between them.
+{
+	const PAGE = [0, 0, 612, 792];
+	const units = segmentPage(layout([
+		{ text: "An important property of the update rule is its careful choice of sizes.", x: 72, y: 300, size: 10, para: true },
+		{ pieces: [{ x: 72, text: "Assuming «ε = 0», the effective step taken is «∆t = α ·»" }, { x: 330, text: "«m»", dy: 6 }, { x: 330, text: "«v»", dy: -13 }], y: 286, size: 10 },
+		{ text: "The effective stepsize has two upper bounds in the cases below.", x: 72, y: 272, size: 10, para: true },
+	], PAGE), PAGE).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	assert.ok(/mv The effective/.test(got), `two lines of prose are not read as one, their words running together: ${got}`);
+}
+
+// A glyph placed far off the page — one bad transform — must not size the
+// column histogram by its coordinate, nor throw out of it.
+{
+	const PAGE = [0, 0, 612, 792];
+	const lines = Array.from({ length: 8 }, (_, k) => ({ text: `Line ${k} of ordinary prose running the measure of the page.`, x: 72, y: 700 - 14 * k, size: 10 }));
+	for (const x of [1e9, Infinity, NaN]) {
+		const page = layout([...lines, { text: "stray", x: 100, y: 400, size: 10, para: true }], PAGE);
+		for (const ch of page.slice(-5)) { ch.rect = [x, 400, x + 5, 410]; ch.inlineRect = ch.rect; }
+		const started = Date.now();
+		const units = segmentPage(page, PAGE).sentence;
+		assert.ok(Date.now() - started < 2000, `a stray glyph at ${x} does not stall the page`);
+		assert.ok(units.length >= 4, `and the page is still read: ${units.length} units`);
+		assert.ok(units.every((u) => u.rects.every((r) => r.every(Number.isFinite))), "every box is a real rectangle");
+	}
+}
+
+// Text the book hides is not read into the sentence beside it.
+{
+	const el = (name, style, ...children) => {
+		const node = { nodeType: 1, localName: name, isConnected: true, style, childNodes: children };
+		children.forEach((c, k) => { c.parentElement = node; c.nextSibling = children[k + 1] || null; });
+		node.firstChild = children[0] || null;
+		return node;
+	};
+	const t = (text) => ({ nodeType: 3, nodeValue: text });
+	const root = el("replaced-body", null,
+		el("p", null, t("The hallway smelt of boiled cabbage."), el("span", { display: "none" }, t("Skip to main content")), t(" At one end of it a poster.")),
+	);
+	const win = { getComputedStyle: (node) => ({ display: (node.style && node.style.display) || "inline", visibility: "visible" }) };
+	const blocks = collectBlocks(root, win);
+	assert.deepStrictEqual(blocks.map((b) => b.text), ["The hallway smelt of boiled cabbage. At one end of it a poster."],
+		"hidden text is not part of the paragraph");
+}
+
 console.log("all tests passed");

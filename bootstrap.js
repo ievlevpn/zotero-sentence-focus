@@ -85,14 +85,22 @@ arg det dim ker tr rank span deg gcd lcm mod hom diag sgn erf card supp ess
 // "by Thm. 2.1", "see Fig. 3", "w.r.t. the measure", "cf. Section 4".
 const ABBREV_NEVER = new Set(`
 fig figs eq eqs eqn eqns ineq sec secs ch chap chaps app apps thm thms prop props
-lem lems cor cors def defn defs rem rems ex exs alg algs tbl tab tabs ref refs
-no nos vol vols pt pts p pp par pars col cols ln art
-cf viz resp approx approximately const resp est incl excl
+lem lems def defn defs rem rems alg algs tbl tab tabs ref refs
+cf viz approx approximately const incl excl
 e.g i.e w.r.t s.t w.l.o.g w.p a.s a.e i.i.d q.e.d
 dr prof mr mrs ms st jr sr mt messrs
 univ dept inst inc ltd co corp assoc soc natl intl
-vs v ca circa ibid op cit ed eds trans repr suppl rev
-min max sup inf lim deg dim char var cov corr resp
+vs v ibid op cit ed eds trans repr suppl rev
+lim
+`.trim().split(/\s+/));
+
+// These are abbreviations only before a number — "no. 5", "p. 12", "Jan. 5",
+// "max. 3" — and ordinary words otherwise: "the state of the art. Note that",
+// "The cat sat. Then", "The answer is no. We move on".
+const ABBREV_NUMBER = new Set(`
+no nos vol vols pt pts p pp par pars col cols ln art artt
+ex exs cor cors est ca circa resp
+min max sup inf deg dim char var cov corr
 jan feb mar apr jun jul aug sept sep oct nov dec
 mon tue tues wed thu thurs fri sat sun
 `.trim().split(/\s+/));
@@ -100,6 +108,19 @@ mon tue tues wed thu thurs fri sat sun
 // Abbreviations a sentence can open with, pointing at a numbered thing.
 const REFERENCE_WORDS = new Set(["fig", "figs", "eq", "eqs", "eqn", "sec", "secs", "ch", "chap", "thm", "lem", "cor",
 	"prop", "tab", "tbl", "alg", "app", "def", "defn", "rem", "ex", "no", "nos", "vol", "p", "pp", "art", "ref", "refs"]);
+
+// Words a sentence commonly starts with. Used only to tell "Appendix A. The
+// bound follows" from "…and H. Weber": after a lone initial, a capitalised
+// word that is not one of these is a surname.
+const SENTENCE_OPENERS = new Set(`
+the this that these those there then thus here they their them thereby therefore hence however
+moreover furthermore nevertheless nonetheless finally first second third next now note observe
+consider suppose assume since because although though while when where with without within
+using given let define denote recall remark indeed instead rather also both each every all any
+some one two three such but and for from into about after before under over between among
+we our it its they he she his her one another each both either neither what which who whose how
+proof lemma theorem corollary proposition definition example remark section chapter
+`.trim().split(/\s+/));
 
 // These do end sentences, but only when something sentence-shaped follows.
 const ABBREV_MAYBE = new Set(["etc", "al", "ff", "seq", "et"]);
@@ -132,7 +153,10 @@ function materialize(raw) {
 		const c = ch.c;
 		if (!c) continue;
 		const rect = ch.rect;
-		if (!rect) continue;
+		// A glyph whose box is not a finite rectangle is not on the page: one
+		// bad transform would otherwise size the column histogram by its
+		// coordinate, or throw out of it.
+		if (!rect || rect.length < 4 || !rect.every(Number.isFinite)) continue;
 		const irect = ch.inlineRect || rect;
 		const cp = c.codePointAt(0);
 		if (/\p{L}/u.test(c)) {
@@ -145,7 +169,7 @@ function materialize(raw) {
 			c,
 			rect: [rect[0], rect[1], rect[2], rect[3]],
 			irect: [irect[0], irect[1], irect[2], irect[3]],
-			size: ch.fontSize || (rect[3] - rect[1]) || 10,
+			size: Math.abs(ch.fontSize || (rect[3] - rect[1])) || 10,
 			font,
 			mathFont: facts.math,
 			extension: facts.extension,
@@ -205,13 +229,22 @@ function charsToLines(chars) {
 	}
 
 	const merged = [];
+	// The box of what has been merged so far, carried along rather than
+	// recomputed: a page cut into tens of thousands of fragments that all
+	// stitch into one line would otherwise take time in the square of them.
+	let box = null;
 	for (const frag of frags.flatMap((f) => unglueFormula(chars, f, frags))) {
 		const prev = merged[merged.length - 1];
-		if (prev && sameVisualLine(chars, prev, frag)) {
+		if (prev && sameVisualLine(chars, prev, frag, box)) {
 			stitch(chars, prev[1], frag[0]);
 			prev[1] = frag[1];
+			const next = rawBBox(chars, frag[0], frag[1]);
+			if (box && next) {
+				box = [Math.min(box[0], next[0]), Math.min(box[1], next[1]), Math.max(box[2], next[2]), Math.max(box[3], next[3])];
+			}
 		} else {
 			merged.push(frag);
+			box = rawBBox(chars, frag[0], frag[1]);
 		}
 	}
 
@@ -309,15 +342,40 @@ function rawBBox(chars, from, to) {
 // next column, which is a gutter away. The band test alone already rules out
 // the common column case, where the foot of one column meets the head of the
 // next.
-function sameVisualLine(chars, a, b) {
+// The baselines of a fragment's ordinary glyphs — scripts and the pieces of a
+// fraction sit off the line and are left out of the reckoning.
+function bandBaselines(chars, from, to) {
+	const sizes = [];
+	for (let i = from; i <= to; i++) if (chars[i].c.trim()) sizes.push(chars[i].size || 10);
+	const body = percentile(sizes, 0.75) || 10;
+	const out = [];
+	for (let i = from; i <= to; i++) {
+		const ch = chars[i];
+		if (!ch.c.trim() || ch.size < 0.85 * body) continue;
+		out.push(ch.baseline);
+	}
+	return out;
+}
+
+function sameVisualLine(chars, a, b, boxA) {
 	if (chars[a[0]].rot !== chars[b[0]].rot) return false;
-	const A = rawBBox(chars, a[0], a[1]);
+	const A = boxA || rawBBox(chars, a[0], a[1]);
 	const B = rawBBox(chars, b[0], b[1]);
 	if (!A || !B) return false;
 	const overlap = Math.min(A[3], B[3]) - Math.max(A[1], B[1]);
 	const minHeight = Math.min(A[3] - A[1], B[3] - B[1]);
 	if (minHeight <= 0 || overlap < 0.4 * minHeight) return false;
 	const size = chars[b[0]].size || 10;
+	// Two lines of prose have two baselines, however far a tall inline
+	// fraction on the upper one reaches down into the lower one's band. (Asked
+	// only of lines carrying words: a formula's pieces are set at every height
+	// there is, and are one line for all that.)
+	if (hasWord(chars, a[0], a[1]) && hasWord(chars, b[0], b[1])) {
+		const baseA = median(bandBaselines(chars, a[0], Math.min(a[1], a[0] + 400)));
+		const baseB = median(bandBaselines(chars, b[0], b[1]));
+		if (baseA !== undefined && baseB !== undefined
+			&& Math.abs(baseA - baseB) > 0.5 * Math.max(size, chars[a[0]].size || 10)) return false;
+	}
 	// A small step back is allowed: TeX sometimes sets a script by moving left
 	// again. Anything genuinely on its own line fails the band test above.
 	return B[0] >= A[0] - 0.5 * size && B[0] <= A[2] + size;
@@ -775,11 +833,15 @@ function verticalGutter(ls, pageWidth) {
 	if (width < 0.4 * pageWidth) return null;
 	// One bin a point: a gutter between two columns can be as narrow as
 	// seventeen points, and coarser bins lose it to rounding at both edges.
-	const BINS = Math.max(1, Math.ceil(width));
+	// One bin a point, and no more bins than a sheet of paper has: a stray
+	// glyph far off the page would otherwise size the histogram, and a page is
+	// scanned for gutters, not the plane it was placed on.
+	const BINS = Math.max(1, Math.min(Math.ceil(width), 5000));
+	const perPoint = BINS / width;
 	const cov = new Uint8Array(BINS);
 	for (const ln of ls) {
-		const a = Math.max(0, Math.floor(ln.rect[0] - left));
-		const b = Math.min(BINS - 1, Math.ceil(ln.rect[2] - left));
+		const a = Math.max(0, Math.floor((ln.rect[0] - left) * perPoint));
+		const b = Math.min(BINS - 1, Math.ceil((ln.rect[2] - left) * perPoint));
 		for (let i = a; i <= b; i++) cov[i] = 1;
 	}
 	// Only gaps in the middle are gutters; the rest are margins.
@@ -792,13 +854,13 @@ function verticalGutter(ls, pageWidth) {
 			runStart = -1;
 		}
 	}
-	if (!best || best.w < 2) return null;
-	const x = left + best.at;
+	if (!best || best.w / perPoint < 2) return null;
+	const x = left + best.at / perPoint;
 	const sides = [ls.filter((l) => centerX(l) < x), ls.filter((l) => centerX(l) >= x)];
 	// Two floats side by side — a table and its caption beside another — are
 	// two columns however narrow the white between them.
 	const captioned = sides.every((side) => side.some((l) => CAPTION_RE.test(l.text)));
-	if (best.w < 5 && !captioned) return null;
+	if (best.w / perPoint < 5 && !captioned) return null;
 	const top = Math.max(...ls.map((l) => l.rect[3])), bottom = Math.min(...ls.map((l) => l.rect[1]));
 	const minLines = Math.max(3, Math.ceil(ls.length * 0.15));
 	for (const side of sides) {
@@ -998,7 +1060,7 @@ function classifyLine(line) {
 // not part of the formula and certainly not part of the paragraph underneath.
 // `markEquationNumber` catches the ones that arrive inside the formula's own
 // line; this catches the ones that arrive as a line of their own.
-const EQ_LABEL_RE = /^[([]\s*[^()[\]]{1,14}\s*[)\]]$/;
+const EQ_LABEL_RE = /^[([]\s*[^()[\]\s]{1,14}\s*[)\]]$/;
 
 // An equation number arrives in one of two shapes: at the end of the formula's
 // own line, or as a line of its own. Both are settled here, where the columns
@@ -1593,7 +1655,7 @@ const CLAUSE_END_RE = /[.;:!?\u2026]["'\u201d\u2019)\]]*\s*$/;
 // authors' names and a year, "[ABLM24]", "[Lê20]" — followed by an author's
 // name or initial. "[GG24] for a general criterion" is a citation in a
 // sentence, and "[Du]V" a formula.
-const BIB_KEY_RE = /^\s*(?:[[(]\d{1,3}[\])]|\[[\p{L}\p{N}ˆ^'’+-]{2,12}\](?=\s+\p{Lu}|\p{Lu}\.))/u;
+const BIB_KEY_RE = /^\s*(?:[[(]\d{1,3}[\])](?=\s*\p{Lu}[\p{L}'’-]*[,.]|\s*\p{Lu}\.)|\[[\p{L}\p{N}ˆ^'’+-]{2,12}\](?=\s+\p{Lu}|\p{Lu}\.))/u;
 
 // "(see also M." / "G. Crandall": a name's initials broken across a line. The
 // second line opens with a capital and a stop, which is also what a lettered
@@ -1919,7 +1981,7 @@ function tableOf(run, colWidth, size, col, named = false) {
 	for (const r of run) for (const l of r.lines) if (l.kind === "display") displayed += l.to - l.from + 1;
 	if (displayed > 0.5 * glyphs && formula > 0.15 * glyphs && !named) return null;
 	// Gutters: stretches that nearly all rows of several cells leave white.
-	const width = Math.ceil(right - left) + 1;
+	const width = Math.min(Math.ceil(right - left) + 1, 5000);
 	const count = new Uint16Array(width);
 	for (const r of multiRows) {
 		for (const c of r.cells) {
@@ -2271,7 +2333,7 @@ function buildBlockText(chars, lines) {
 
 const TERMINATOR_RE = /[.!?…]/;
 const CLOSER_RE = /[.!?…'"’”)\]}»›]/;
-const OPENER_RE = /[\p{Lu}\p{N}"“'‘(\[«$—–]/u;
+const OPENER_RE = /[\p{Lu}\p{N}"“'‘(\[«$—–§¶•†‡]/u;
 
 // The alphabetic token ending just before `i`, dots included, so "w.r.t" and
 // "i.e" come back whole rather than as "t" and "e".
@@ -2284,6 +2346,19 @@ function prevToken(text, i) {
 		break;
 	}
 	return out;
+}
+
+// "Math. Phys. 86", "J. Funct. Anal. 120": up to three capitalised
+// abbreviations and then a number, none of them a cross-reference.
+function journalRun(text, at) {
+	let k = at;
+	for (let n = 0; n < 3; n++) {
+		const m = /^\s*(\p{Lu}\p{Ll}{0,8})\.\s*/u.exec(text.slice(k, k + 16));
+		if (!m || REFERENCE_WORDS.has(m[1].toLowerCase())) return false;
+		k += m[0].length;
+		if (/^\d/.test(text.slice(k, k + 1))) return true;
+	}
+	return false;
 }
 
 // Whether position `i` sits inside a bracket that opened shortly before it
@@ -2332,6 +2407,10 @@ function isBoundary(text, i, end, math, lineStarts) {
 	const atEnd = j >= text.length;
 	const next = atEnd ? "" : text[j];
 
+	// A stop straight after another is part of one run — an ellipsis — which
+	// was judged at its first stop.
+	if (ch === "." && text[i - 1] === ".") return false;
+
 	if (ch === ".") {
 		// 3.14, Section 2.1, version 1.0 — a period between two digits.
 		if (/\d/.test(text[i - 1] || "") && /\d/.test(text[i + 1] || "")) return false;
@@ -2342,8 +2421,11 @@ function isBoundary(text, i, end, math, lineStarts) {
 	if (!atEnd && /\p{Ll}/u.test(next) && !math[j]) return false;
 
 	// "..." only closes a sentence when something new starts after it.
-	if (ch === "…" || text.slice(Math.max(0, i - 2), i + 1) === "...") {
+	if (ch === "…" || text.slice(i, i + 3) === "..." || text.slice(Math.max(0, i - 2), i + 1) === "...") {
 		if (!atEnd && !/\p{Lu}/u.test(next)) return false;
+		// "Bach, Mozart, ... Beethoven": what a sentence does not end on is a
+		// comma before the gap.
+		if (/[,;:]\s*$/.test(text.slice(Math.max(0, i - 4), i))) return false;
 	}
 
 	// Inside brackets that close soon after: "(1 Pet. 5:5)", "[see Ch. 3.
@@ -2358,24 +2440,45 @@ function isBoundary(text, i, end, math, lineStarts) {
 		const low = tok.toLowerCase();
 		if (ABBREV_NEVER.has(low)) return false;
 		// A short capitalised abbreviation before a number is a reference —
-		// "Ps. 146:5", "Gen. 1", "Art. 12" — not a sentence and a figure.
-		if (/^\p{Lu}\p{Ll}{0,3}$/u.test(tok) && /^\d/.test(next)) return false;
-		// ...and so is a stop before such a one: "Duke Math. J. 55" — unless
-		// it is a cross-reference opening the next sentence, "Fig. 7 shows".
-		const ahead = /^\s*(\p{Lu}\p{Ll}{0,3})\.\s*\d/u.exec(text.slice(end));
-		if (ahead && !REFERENCE_WORDS.has(ahead[1].toLowerCase())) return false;
+		// "Ps. 146:5", "Phys. 86, no. 1" — where the number is part of one:
+		// followed by a colon, or by more of a citation. A stop before a bare
+		// number is a stop: "He was due to Ito. 3 years later", "in May. 5
+		// people came".
+		if (/^\p{Lu}\p{Ll}{0,3}$/u.test(tok) && /^\d+\s*[:,;–—-]/.test(next + text.slice(j + 1, j + 8))) return false;
+		// A journal's name is a run of abbreviations ending in its volume —
+		// "Comm. Math. Phys. 86" — and none of them ends the sentence. A
+		// cross-reference that opens one — "Fig. 7 shows" — is not such a run.
+		if (journalRun(text, end)) return false;
+		// A journal's initial carries its volume: "… Math. J. 55 (1987)".
+		if (/^\p{Lu}$/u.test(tok) && /^\d/.test(next)) return false;
+		// ...and so is a stop before a journal's initial and its volume:
+		// "Duke Math. J. 55", "Astrophys. J. 714".
+		if (/^\s*\p{Lu}\.\s*\d/u.test(text.slice(end, end + 12))) return false;
 		if (ABBREV_MAYBE.has(low) && !atEnd && !OPENER_RE.test(next)) return false;
+		// "Zhou et al. [149] is robust", "Breuleux et al. (2011) and refined":
+		// a citation follows the abbreviation; a new sentence does not open
+		// with a reference.
+		if (ABBREV_MAYBE.has(low) && /^[[(\d]/.test(next)) return false;
+		// An abbreviation for something numbered — "no. 5", "p. 12", "Jan. 5".
+		if (ABBREV_NUMBER.has(low) && /^\d/.test(next)) return false;
+		// A dotted acronym: "U.S. National Science Foundation", "P.O. Box 9010".
+		if (/^\p{Lu}(?:\.\p{Lu})+$/u.test(tok)) return false;
 
 		// Author initials: "J. R. R. Tolkien". A single capital is an initial
 		// when another initial follows it or one precedes it — which leaves
 		// "... in Appendix A. We now ..." free to end a sentence.
 		if (/^\p{Lu}$/u.test(tok)) {
-			if (/^\s*\p{Lu}\./u.test(text.slice(end))) return false;
-			if (/\p{Lu}\.\s*$/u.test(text.slice(0, i - 1))) return false;
+			if (/^\s*\p{Lu}\./u.test(text.slice(end, end + 6))) return false;
+			// "…grateful to M. Gubinelli and to H. Weber": a lone initial
+			// before a name. A sentence opening after "Appendix A." starts on
+			// a word a sentence starts with, not on a surname.
+			const word = /^\s*(\p{Lu}\p{Ll}{2,})/u.exec(text.slice(end, end + 20));
+			if (word && !SENTENCE_OPENERS.has(word[1].toLowerCase())) return false;
+			if (/\p{Lu}\.\s*$/u.test(text.slice(Math.max(0, i - 6), i - 1))) return false;
 			// "Crandall and R. Newcomb": a single initial after a surname and
 			// "and". Points named by capitals — "joins A and C. Then" — have a
 			// capital, not a name, before the "and".
-			if (!math[i - 1] && /\p{Lu}\p{Ll}{2,}\s+(?:and|&)\s+$/u.test(text.slice(0, i - 1))
+			if (!math[i - 1] && /\p{Lu}\p{Ll}{2,}\s+(?:and|&)\s+$/u.test(text.slice(Math.max(0, i - 40), i - 1))
 				&& /^\s*\p{Lu}\p{Ll}/u.test(text.slice(end))) return false;
 		}
 
@@ -2433,11 +2536,26 @@ function splitSentences(text, math, lineStarts) {
 // highlight onto the heading below.
 const contentLength = (s) => (s.match(/[\p{L}\p{N}]/gu) || []).length;
 
+// "1.", "(2)", "iii." — an enumeration's label and nothing else.
+const LABEL_ONLY_RE = /^\s*[([]?\s*(?:\d{1,3}|[ivxlcdm]{1,5}|\p{L})\s*[).\]]\s*$/iu;
+
 function mergeTiny(text, ranges) {
 	const out = [];
 	for (const r of ranges) {
-		if (contentLength(text.slice(r[0], r[1])) < 2 && out.length) out[out.length - 1][1] = r[1];
+		const scrap = text.slice(r[0], r[1]);
+		// A label is the head of what follows it, not the tail of what came
+		// before: "We prove three things. 1. The map is open." reads as two
+		// sentences and a numbered one, never as "things. 1.".
+		if (LABEL_ONLY_RE.test(scrap)) { out.push(r); continue; }
+		if (contentLength(scrap) < 2 && out.length) out[out.length - 1][1] = r[1];
 		else out.push(r);
+	}
+	// A label keeps the piece after it; alone at the end it joins the piece
+	// before it, there being nothing else to join.
+	for (let k = out.length - 1; k >= 0; k--) {
+		if (!LABEL_ONLY_RE.test(text.slice(out[k][0], out[k][1]))) continue;
+		if (k + 1 < out.length) { out[k + 1][0] = out[k][0]; out.splice(k, 1); }
+		else if (k > 0) { out[k - 1][1] = out[k][1]; out.splice(k, 1); }
 	}
 	// A leading scrap has no predecessor to join, so it leads the next piece.
 	if (out.length > 1 && contentLength(text.slice(out[0][0], out[0][1])) < 2) {
@@ -2460,6 +2578,7 @@ function rectsForChars(chars, idx) {
 		const i = idx[k];
 		const ch = chars[i];
 		if (!ch || ch.skip || /^\s+$/.test(ch.c)) continue;
+		if (ch.irect[2] - ch.irect[0] <= 0 && run) continue;   // a combining mark
 		if (run && i === run.last) continue;   // same glyph reached twice
 		if (run) {
 			const prev = chars[run.last];
@@ -2471,7 +2590,16 @@ function rectsForChars(chars, idx) {
 				const between = chars[j];
 				if (!(between.marker || between.skip || /^\s*$/.test(between.c))) { skipped = false; break; }
 			}
-			const broke = prev.lineEnd || i <= run.last || !skipped || ch.rot !== prev.rot
+			// The line ended if the layout said so, or if any glyph stepped over
+			// said so: a line broken at a hyphen carries the flag on the hyphen,
+			// which is dropped from the text.
+			let ended = prev.lineEnd;
+			for (let j = run.last + 1; j < i && !ended; j++) if (chars[j].lineEnd) ended = true;
+			// ...and a step to another band is a new line whatever the flags
+			// say: the bottom of one column to the top of the next.
+			const step = Math.abs(ch.baseline - prev.baseline);
+			const broke = ended || i <= run.last || !skipped || ch.rot !== prev.rot
+				|| (ch.rot === 0 && step > 0.6 * Math.max(prev.size, ch.size, 4))
 				// A gulf between cells breaks a line; less does not. A glyph
 				// that maps to no character at all — `≍` in "N_n ≍ n⁹" — leaves a
 				// hole wider than a word space in the middle of a sentence.
@@ -2943,6 +3071,7 @@ const cacheOf = (session) => cacheFor(session.reader);
 // step size is changed rarely. So only the size in use is kept; changing it
 // costs one re-read of each page revisited.
 const cacheKey = (pageIndex) => `${pageIndex}:${granularity()}`;
+const sizeOfKey = (key) => String(key).slice(String(key).indexOf(":") + 1);
 
 function unitsAt(session, pageIndex) {
 	const key = cacheKey(pageIndex);
@@ -2952,7 +3081,8 @@ function unitsAt(session, pageIndex) {
 	if (!pending) {
 		pending = computeUnits(session, pageIndex, key);
 		session.inflight.set(key, pending);
-		pending.then(() => session.inflight.delete(key), () => session.inflight.delete(key));
+		const done = () => { if (session.inflight.get(key) === pending) session.inflight.delete(key); };
+		pending.then(done, done);
 	}
 	return pending;
 }
@@ -2964,7 +3094,10 @@ async function computeUnits(session, pageIndex, key) {
 	try {
 		const data = Cu.waiveXrays(await v.pdf.getPageData(Cu.cloneInto({ pageIndex }, v.win)));
 		if (data && data.chars) {
-			const g = granularity();
+			// The size asked for when the page was queued, not the one in force
+			// when the worker answered: the two differ when the reader changes
+			// it mid-flight, and the answer is filed under the former.
+			const g = sizeOfKey(key);
 			const all = segmentPage(data.chars, data.viewBox || [0, 0, 612, 792], { mergeDisplay: !!pref("mergeDisplay"), only: g });
 			units = all[g] || all.sentence || [];
 		}
@@ -3155,7 +3288,13 @@ function padBoxes(boxes, em, isDisplay, scale) {
 // boxes composited one at a time would darken wherever they overlap — a
 // stronger patch on exactly the glyph the reader is trying to look at. Drawn
 // as a group, overlapping boxes of the same opaque colour are idempotent.
+// A session goes on being referred to by whatever it queued before it was
+// stopped: a page still being analysed, a move waiting its turn. None of it
+// may touch the page afterwards.
+const live = (session) => !!session && sessions.get(session.reader) === session;
+
 function paint(session, scroll) {
+	if (!live(session)) return;
 	clearPaint(session);
 	const v = viewerOf(session.reader);
 	if (!v) { stopSession(session.reader); return; }   // tab closed under us
@@ -3398,6 +3537,7 @@ function pageCount(session) {
 // stepping over any that hold no text at all (plates, scans without an OCR
 // layer). Bounded so a run of empty pages cannot spin.
 async function move(session, delta) {
+	if (!live(session)) return false;
 	const total = pageCount(session);
 	if (!total) return false;
 	let page = session.pageIndex;
@@ -3410,7 +3550,7 @@ async function move(session, delta) {
 		units = await unitsAt(session, page);
 		i = delta > 0 ? 0 : units.length - 1;
 	}
-	if (!units.length || i < 0 || i >= units.length) return false;
+	if (!units.length || i < 0 || i >= units.length || !live(session)) return false;
 	session.pageIndex = page;
 	session.unitIndex = i;
 	paint(session, true);
@@ -3447,7 +3587,9 @@ function pickVisible(session, units) {
 }
 
 async function focusPage(session, pageIndex, which) {
+	if (!live(session)) return;
 	const units = await unitsAt(session, pageIndex);
+	if (!live(session)) return;
 	session.pageIndex = pageIndex;
 	if (!units.length) { clearPaint(session); return; }
 	session.unitIndex = which === "visible" ? pickVisible(session, units)
@@ -3461,7 +3603,7 @@ async function focusPage(session, pageIndex, which) {
 // already in, so no extra coordinate maths is needed.
 async function focusAtPoint(session, pageEl, clientX, clientY) {
 	const v = viewerOf(session.reader);
-	if (!v) return;
+	if (!v || !live(session)) return;
 	const pageIndex = Number(pageEl.dataset.pageNumber) - 1;
 	if (!Number.isInteger(pageIndex) || pageIndex < 0) return;
 	const pv = pageViewOf(v, pageIndex);
@@ -3472,7 +3614,7 @@ async function focusAtPoint(session, pageEl, clientX, clientY) {
 	const y = (clientY - box.top) / box.height * 100;
 
 	const units = await unitsAt(session, pageIndex);
-	if (!units.length) return;
+	if (!units.length || !live(session)) return;
 	let best = -1, bestScore = Infinity;
 	for (let i = 0; i < units.length; i++) {
 		for (const r of units[i].rects) {
@@ -3595,17 +3737,20 @@ function stopSession(reader) {
 	const session = sessions.get(reader);
 	if (!session) return;
 	sessions.delete(reader);
+	if (openMenuPanel && openMenuPanel.reader === reader) closeMenu();
 	try { session.clear ? session.clear() : clearPaint(session); } catch (e) { /* its document is unloading */ }
 	for (const off of session.handlers) {
 		try { off(); } catch (e) { /* document already gone */ }
 	}
-	setButtonState(session.btn, false);
+	try { setButtonState(session.btn, false); } catch (e) { /* its toolbar went with the tab */ }
 }
 
 function setButtonState(btn, on) {
 	if (!btn) return;
 	btn.setAttribute("aria-pressed", on ? "true" : "false");
 	btn.style.opacity = on ? "1" : ".65";
+	const badge = btn.querySelector && btn.querySelector("[data-sfz-counter=badge]");
+	if (badge) renderCounter(badge, Number(badge.textContent) || 0);
 }
 
 function toggle(reader, doc, btn) {
@@ -3663,7 +3808,7 @@ function textUnits(text, math, granularity) {
 	if (!/\S/.test(text)) return [];
 	if (granularity === "paragraph") return [[0, text.length]];
 	if (granularity === "word") return wordRanges(text);
-	return splitSentences(text, math, []);
+	return splitSentences(text, math, [0]);
 }
 
 // Elements whose text is not read: not shown, or not prose. A formula is read
@@ -3674,6 +3819,19 @@ const EPUB_BLOCKS = new Set(["address", "article", "aside", "blockquote", "body"
 	"header", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "tbody", "td", "tfoot", "th",
 	"thead", "tr", "ul"]);
 const EPUB_BLOCK_DISPLAYS = new Set(["block", "list-item", "table-cell", "table", "flex", "grid", "table-caption", "flow-root"]);
+
+// An element the book's own stylesheet hides — a page-number span, a nav, a
+// screen-reader note — carries no text a reader can step onto, and its words
+// have no place in the sentence around it.
+function isHidden(el, win) {
+	if (!win || !el.isConnected) return false;
+	try {
+		const style = win.getComputedStyle(el);
+		return style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse";
+	} catch (e) {
+		return false;
+	}
+}
 
 function isBlockElement(el, win) {
 	const name = (el.localName || "").toLowerCase();
@@ -3712,7 +3870,7 @@ function collectBlocks(root, win) {
 			}
 			if (child.nodeType !== 1) continue;
 			const name = (child.localName || "").toLowerCase();
-			if (EPUB_SKIP.has(name)) continue;
+			if (EPUB_SKIP.has(name) || isHidden(child, win)) continue;
 			if (name === "br") { pieces.push({ text: " " }); continue; }
 			const math = inMath || name === "math" || name === "svg" || name.startsWith("mjx-");
 			const block = isBlockElement(child, win);
@@ -3767,16 +3925,28 @@ function sectionIndexOf(dv, node) {
 
 function blocksOf(session, section) {
 	let blocks = session.blocks.get(section);
+	// A section that was read while it was out of the document was read
+	// without its styling: the book may set a span as a paragraph, and hidden
+	// text is only hidden once it is in the document. Read it again now that
+	// it is there.
+	if (blocks && blocks.detached && sectionMounted(session, section)) blocks = null;
 	if (!blocks) {
 		const dv = domViewOf(session.reader);
 		const root = dv && sectionRoots(dv)[section];
 		blocks = root ? collectBlocks(root, dv.win) : [];
+		blocks.detached = !sectionMounted(session, section);
 		session.blocks.set(section, blocks);
 		// A book's text never changes, but a long one has many sections: keep
 		// the ones near where the reader is.
 		while (session.blocks.size > 12) session.blocks.delete(session.blocks.keys().next().value);
 	}
 	return blocks;
+}
+
+function sectionMounted(session, section) {
+	const dv = domViewOf(session.reader);
+	const renderer = dv && dv.view.renderers && dv.view.renderers[section];
+	return renderer ? !!renderer.mounted : true;   // a snapshot is always shown
 }
 
 function rangeOf(doc, unit) {
@@ -3799,7 +3969,12 @@ function domLines(dv, blocks) {
 			let rect = null;
 			try { rect = rangeOf(dv.doc, word).getClientRects()[0] || null; } catch (e) { rect = null; }
 			if (!rect) return null;
-			const wraps = last && (rect.left < last.left - 1 || rect.top >= last.bottom - 0.25 * (last.bottom - last.top));
+			// Back to the left and down is a wrap; so is the top of the next
+			// column, which is further right but higher up the page.
+			const height = last ? last.bottom - last.top : 0;
+			const wraps = last && (rect.left < last.left - 1
+				|| rect.top >= last.bottom - 0.25 * height
+				|| rect.top <= last.top - 0.5 * height);
 			if (!line || wraps) {
 				line = { ...word, text: word.text };
 				out.push(line);
@@ -3814,13 +3989,34 @@ function domLines(dv, blocks) {
 	return out;
 }
 
+// What the text is set in, as far as a line is concerned: a change in any of
+// it means the lines fell differently.
+function layoutStamp(dv, section) {
+	try {
+		const root = sectionRoots(dv)[section];
+		const box = root && root.getBoundingClientRect ? root.getBoundingClientRect() : null;
+		const size = dv.win.getComputedStyle(dv.doc.documentElement).fontSize;
+		return `${size}|${Math.round(box ? box.width : 0)}x${Math.round(box ? box.height : 0)}|${dv.win.innerWidth}x${dv.win.innerHeight}`;
+	} catch (e) {
+		return "";
+	}
+}
+
 function domUnitsAt(session, section) {
 	const g = granularity();
 	const key = `${section}:${g}`;
+	const dv0 = domViewOf(session.reader);
+	if (!dv0) return [];
+	if (g === "line") {
+		const stamp = layoutStamp(dv0, section);
+		if (session.stamps.get(key) !== stamp) {
+			session.units.delete(key);
+			session.stamps.set(key, stamp);
+		}
+	}
 	let units = session.units.get(key);
 	if (units) return units;
-	const dv = domViewOf(session.reader);
-	if (!dv) return [];
+	const dv = dv0;
 	const blocks = blocksOf(session, section);
 	units = g === "line" ? domLines(dv, blocks) : null;
 	if (!units) {
@@ -3901,6 +4097,21 @@ function clearDomPaint(session, dv = domViewOf(session.reader)) {
 	} catch (e) { /* document gone */ }
 }
 
+const currentDomUnit = (session) => (session.units.get(`${session.section}:${granularity()}`) || [])[session.unitIndex];
+
+// Put the ruler back on the unit it was on, in whatever the units are now:
+// the one holding where it started, or the first one after it.
+function reanchorDom(session, was) {
+	if (!was || !was.startNode) return;
+	const units = domUnitsAt(session, session.section);
+	let at = units.findIndex((u) => u.startNode === was.startNode
+		&& u.startOffset <= was.startOffset && u.endOffset > was.startOffset);
+	if (at < 0) at = units.findIndex((u) => u.startNode === was.startNode && u.startOffset >= was.startOffset);
+	if (at < 0) at = Math.min(session.unitIndex, units.length - 1);
+	session.unitIndex = Math.max(0, at);
+	paintDom(session, false);
+}
+
 function paintDom(session, scroll) {
 	const dv = domViewOf(session.reader);
 	if (!dv) { stopSession(session.reader); return; }
@@ -3942,7 +4153,9 @@ function revealDom(dv, range) {
 	if (mode === "never" && !unmounted) return;
 	try {
 		if (flow && typeof flow.scrollIntoView === "function") {
-			const options = { block: "start", ifNeeded: mode !== "always", skipHistory: true };
+			const margin = Math.min(80, Math.max(0, Number(pref("scrollMargin")) || 0)) / 100;
+			const options = { block: "start", ifNeeded: mode !== "always", skipHistory: true,
+				visibilityMargin: Math.round(margin * (dv.win.innerHeight || 0)) };
 			flow.scrollIntoView(range, Cu ? Cu.cloneInto(options, dv.win) : options);
 			return;
 		}
@@ -3976,15 +4189,11 @@ async function moveDom(session, delta) {
 	session.unitIndex = i;
 	paintDom(session, true);
 	// A section stepped into before it was laid out was read a sentence at a
-	// time; now it is on screen, its lines can be found.
+	// time; now it is on screen, its lines can be found, and the ruler moves
+	// to the line holding the sentence it landed on.
 	if (granularity() === "line" && !session.units.has(`${section}:line`)) {
-		const lines = domUnitsAt(session, section);
-		if (session.units.has(`${section}:line`)) {
-			const unit = units[i];
-			const at = lines.findIndex((l) => l.startNode === unit.startNode && l.startOffset >= unit.startOffset);
-			session.unitIndex = Math.max(0, at);
-			paintDom(session, false);
-		}
+		const was = units[i];
+		if (domUnitsAt(session, section) !== units) reanchorDom(session, was);
 	}
 	return true;
 }
@@ -4026,9 +4235,11 @@ function focusDomAtPoint(session, x, y) {
 	const section = sectionIndexOf(dv, caret.offsetNode);
 	const units = domUnitsAt(session, section);
 	for (let k = 0; k < units.length; k++) {
-		let range;
-		try { range = rangeOf(dv.doc, units[k]); } catch (e) { continue; }
-		if (range.comparePoint(caret.offsetNode, caret.offset) === 0) {
+		let inside = false;
+		try {
+			inside = rangeOf(dv.doc, units[k]).comparePoint(caret.offsetNode, caret.offset) === 0;
+		} catch (e) { continue; }   // a node from another document or section
+		if (inside) {
 			session.section = section;
 			session.unitIndex = k;
 			paintDom(session, false);
@@ -4041,7 +4252,7 @@ function startDomSession(reader, doc, btn, dv) {
 	const session = {
 		kind: "dom", reader, btn,
 		section: 0, unitIndex: 0,
-		blocks: new Map(), units: new Map(),
+		blocks: new Map(), units: new Map(), stamps: new Map(),
 		handlers: [], painted: [], inflight: new Map(),
 		queue: Promise.resolve(),
 	};
@@ -4076,7 +4287,10 @@ function startDomSession(reader, doc, btn, dv) {
 	session.handlers.push(() => dv.doc.removeEventListener("click", onClick, true));
 	// Lines move when the text reflows: a resize, a change of font size.
 	const dropLines = () => {
+		if (!session.units.size) return;
+		const was = currentDomUnit(session);
 		for (const key of [...session.units.keys()]) if (key.endsWith(":line")) session.units.delete(key);
+		if (was) reanchorDom(session, was);
 	};
 	try {
 		const observer = new dv.win.ResizeObserver(dropLines);
@@ -4111,8 +4325,19 @@ function startDomSession(reader, doc, btn, dv) {
 // Each count also holds, weakly, every place it is shown: the badge in the
 // corner of the tab's button, and the menu while it is open.
 const readCounts = new WeakMap();   // reader -> { count, views: Set<WeakRef> }
-// Every badge in every tab, only so that shutdown can take them off toolbars.
+// Every button and badge this plugin has put on a toolbar, weakly, so that
+// shutdown can take them off again. A button left behind would go on starting
+// sessions in a module nothing can reach any more.
 const badges = new Set();
+const buttons = new Set();
+
+// Drop the references whose element has gone with its tab.
+function sweepRefs(set) {
+	for (const ref of [...set]) {
+		const el = ref.deref();
+		if (!el || !el.isConnected) set.delete(ref);
+	}
+}
 
 function counterOf(reader) {
 	let counter = readCounts.get(reader);
@@ -4136,7 +4361,7 @@ function eraseCount(reader) {
 function showCount(reader, el) {
 	const ref = new WeakRef(el);
 	counterOf(reader).views.add(ref);
-	if (el.dataset.sfzCounter === "badge") badges.add(ref);
+	if (el.dataset.sfzCounter === "badge") { sweepRefs(badges); badges.add(ref); }
 	renderCounter(el, counterOf(reader).count);
 }
 
@@ -4155,14 +4380,18 @@ function renderCounters(reader) {
 }
 
 function renderCounter(el, count) {
-	const noun = count === 1 ? "sentence" : "sentences";
+	const g = granularity();
+	const noun = count === 1 ? g : g === "word" ? "words" : g === "line" ? "lines"
+		: g === "paragraph" ? "paragraphs" : "sentences";
 	if (el.dataset.sfzCounter === "badge") {
 		el.textContent = String(count);
 		// Not `hidden`: the reader's toolbar styles its children's display.
 		el.style.display = count === 0 ? "none" : "";
-		if (el.parentNode) {
-			el.parentNode.title = `Sentence focus — ${count} ${noun} read in this tab. `
-				+ "Click to turn on, [ and ] to step, right-click for settings";
+		const btn = el.parentNode;
+		if (btn) {
+			const on = btn.getAttribute("aria-pressed") === "true";
+			btn.title = `Sentence focus — ${count} ${noun} read in this tab. `
+				+ (on ? "Click to turn off" : "Click to turn on") + ", [ and ] to step, right-click for settings";
 		}
 	} else {
 		el.textContent = `${count} ${noun} read in this tab`;
@@ -4425,6 +4654,7 @@ function openMenu(doc, btn, reader) {
 	}
 	openMenuPanel = {
 		el: panel,
+		reader,
 		cleanup: () => {
 			for (const d of docs) {
 				d.removeEventListener("pointerdown", onDown, true);
@@ -4478,6 +4708,8 @@ function renderButton(event) {
 		+ "font:600 8.5px/1 system-ui,sans-serif;font-variant-numeric:tabular-nums;opacity:.8;";
 	btn.append(badge);
 	showCount(reader, badge);
+	sweepRefs(buttons);
+	if (typeof WeakRef === "function") buttons.add(new WeakRef(btn));
 	append(btn);
 }
 
@@ -4512,9 +4744,11 @@ function applyPrefEffect(effect) {
 
 let prefObservers = [];
 let version = "";
+let stopped = false;
 
 function startup({ id, version: pluginVersion, rootURI }) {
 	version = pluginVersion || "";
+	stopped = false;
 	Zotero.debug(`Sentence Focus ${version} starting`);
 	Zotero.SentenceFocus = { PREF, DEFAULTS, version };
 	for (const [key, effect] of Object.entries(PREF_EFFECT)) {
@@ -4529,21 +4763,28 @@ function startup({ id, version: pluginVersion, rootURI }) {
 		scripts: [rootURI + "prefs.js"],
 		stylesheets: [rootURI + "prefs.css"],
 		label: "Sentence Focus",
-	}).then((paneID) => { prefPane = paneID; },
-		(e) => Zotero.debug("Sentence Focus: prefs pane failed to register - " + e));
+	}).then((paneID) => {
+		// The plugin may have been disabled while this was in flight; a pane
+		// left registered would open a script whose plugin is gone.
+		if (stopped) { try { Zotero.PreferencePanes.unregister(paneID); } catch (e) { /* already gone */ } return; }
+		prefPane = paneID;
+	}, (e) => Zotero.debug("Sentence Focus: prefs pane failed to register - " + e));
 
 	onRenderToolbar = (event) => renderButton(event);
 	Zotero.Reader.registerEventListener("renderToolbar", onRenderToolbar, id);
 }
 
 function shutdown() {
+	stopped = true;
 	closeMenu();
 	for (const reader of [...sessions.keys()]) stopSession(reader);
-	for (const ref of badges) {
-		const el = ref.deref();
-		if (el) try { el.remove(); } catch (e) { /* tab gone */ }
+	for (const set of [badges, buttons]) {
+		for (const ref of set) {
+			const el = ref.deref();
+			if (el) try { el.remove(); } catch (e) { /* tab gone */ }
+		}
+		set.clear();
 	}
-	badges.clear();
 	dropInjectedStyles();
 	pageCache.clear();
 	for (const o of prefObservers) {
