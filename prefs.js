@@ -24,8 +24,8 @@
 
 		// [element id, pref key] for each kind of control.
 		const menus = [["sf-granularity", "granularity"], ["sf-style", "style"], ["sf-autoscroll", "autoScroll"],
-			["sf-annotate-key", "annotateKey"]];
-		const checks = [["sf-behind", "behind"], ["sf-merge", "mergeDisplay"], ["sf-click", "followClick"]];
+			["sf-annotate-key", "annotateKey"], ["sf-click", "clickMoves"]];
+		const checks = [["sf-behind", "behind"], ["sf-merge", "mergeDisplay"], ["sf-copy", "copyUnit"]];
 		const sliders = [["sf-opacity", "opacity"], ["sf-padding", "padding"], ["sf-margin", "scrollMargin"]];
 
 		for (const [id, key] of menus) {

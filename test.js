@@ -29,6 +29,7 @@ const {
 	countRead, eraseCount, showCount,
 	blockText, collectBlocks, blockUnits,
 	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
+	copyKeyPressed, CLICK_MODES,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -2960,6 +2961,27 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
 	assert.deepStrictEqual(offered, ANNOTATE_KEYS.map(([value]) => value),
 		"Settings offers the same shortcuts the reader menu does");
+}
+
+// The copy key is the platform's own, and nothing that merely looks like it:
+// Cmd-Shift-C and Ctrl-Alt-C belong to other things.
+{
+	const key = (over) => Object.assign({ code: "KeyC", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }, over);
+	assert.ok(copyKeyPressed(key({ ctrlKey: true })), "the copy key is recognised");
+	assert.ok(!copyKeyPressed(key({ ctrlKey: true, shiftKey: true })), "Ctrl+Shift+C is not it");
+	assert.ok(!copyKeyPressed(key({ ctrlKey: true, altKey: true })), "nor Ctrl+Alt+C");
+	assert.ok(!copyKeyPressed(key({ ctrlKey: true, metaKey: true })), "nor both modifiers at once");
+	assert.ok(!copyKeyPressed(key({})), "and a bare C types a C");
+	assert.ok(!copyKeyPressed(key({ ctrlKey: true, code: "KeyV" })), "paste is not copy");
+}
+
+// The reader menu and the Settings pane offer the same three click modes.
+{
+	const pane = require("fs").readFileSync("prefs.xhtml", "utf8");
+	const options = /id="sf-click">([\s\S]*?)<\/html:select>/.exec(pane);
+	assert.ok(options, "the click menu is in the Settings pane");
+	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
+	assert.deepStrictEqual(offered, CLICK_MODES, "Settings offers the modes the plugin knows");
 }
 
 // Zotero's own eight annotation colours, in Zotero's own order: the digits in

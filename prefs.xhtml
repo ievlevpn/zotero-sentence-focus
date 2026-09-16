@@ -92,10 +92,16 @@
 		<html:p class="sf-hint">Off by default: a displayed formula is its own stop, so
 			<html:em>…such that</html:em>, the equation, and <html:em>where…</html:em> are
 			three separate steps. Turn this on to read them as one sentence instead.</html:p>
-		<html:div class="sf-check">
-			<html:input id="sf-click" type="checkbox"/>
-			<html:label for="sf-click">Clicking the page moves the ruler</html:label>
+		<html:div class="sf-grid">
+			<html:label for="sf-click">Clicking the page</html:label>
+			<html:select id="sf-click">
+				<html:option value="click">Moves the ruler</html:option>
+				<html:option value="mod-click">Moves the ruler with Cmd/Ctrl held</html:option>
+				<html:option value="off">Does nothing</html:option>
+			</html:select>
 		</html:div>
+		<html:p class="sf-hint">A plain click is also how text is selected, so hold the
+			modifier instead if the ruler keeps landing somewhere you did not mean.</html:p>
 	</groupbox>
 	<groupbox>
 		<html:h2>Annotating</html:h2>
@@ -113,5 +119,11 @@
 			<html:em>1</html:em>–<html:em>8</html:em> pick a colour, <html:em>h</html:em> and
 			<html:em>u</html:em> the kind of mark, <html:em>Enter</html:em> makes it, and
 			<html:em>n</html:em> makes it and opens Zotero's own popup for a comment and tags.</html:p>
+		<html:div class="sf-check">
+			<html:input id="sf-copy" type="checkbox"/>
+			<html:label for="sf-copy">Cmd/Ctrl + C copies the sentence the ruler is on</html:label>
+		</html:div>
+		<html:p class="sf-hint">Only when nothing is selected — with a selection the copy key
+			is the reader's own, and copies that.</html:p>
 	</groupbox>
 </vbox>

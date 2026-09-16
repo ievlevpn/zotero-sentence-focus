@@ -28,10 +28,11 @@ const DEFAULTS = {
 	autoScroll: "offscreen",    // never | offscreen | always
 	scrollMargin: 30,           // percent of the viewer height to keep clear at the top
 	mergeDisplay: false,        // fold display equations into the neighbouring sentence
-	followClick: true,
+	clickMoves: "click",         // click | mod-click | off
 	annotateKey: "alt-h",        // alt-h | mod-shift-h | mod-shift-u | off
 	annotateColor: "#ffd400",    // last colour used for an annotation
 	annotateType: "highlight",   // highlight | underline
+	copyUnit: true,              // Cmd/Ctrl-C copies the step when nothing is selected
 };
 
 function pref(key) {
@@ -40,6 +41,28 @@ function pref(key) {
 		if (v !== undefined && v !== null && v !== "") return v;
 	} catch (e) { /* unset */ }
 	return DEFAULTS[key];
+}
+
+// Clicking the page to put the ruler somewhere is what most people want, but
+// it takes the click away from selecting text with a stray tap. The middle
+// setting asks for the platform's own modifier — Cmd on a Mac, where Ctrl-click
+// is the context menu, and Ctrl everywhere else.
+const CLICK_MODES = ["click", "mod-click", "off"];
+
+function clickMoves() {
+	const v = pref("clickMoves");
+	// This was a checkbox before v0.29; an old "no" still means never.
+	if (v === false) return "off";
+	if (v === true) return "click";
+	const mode = String(v);
+	return CLICK_MODES.includes(mode) ? mode : "click";
+}
+
+function clickOpens(e) {
+	const mode = clickMoves();
+	if (mode === "off") return false;
+	if (mode !== "mod-click") return true;
+	return onMac() ? e.metaKey : e.ctrlKey;
 }
 
 // --- math detection --------------------------------------------------------
@@ -3656,6 +3679,12 @@ function sessionKey(session, e, step) {
 		return;
 	}
 	if (annotateOpenFor(session)) return;
+	if (copyKeyPressed(e)) {
+		// Only when it copied something: with nothing to copy the key is the
+		// reader's, and taking it would break copying from the sidebar.
+		if (copyCurrent(session)) { e.preventDefault(); e.stopPropagation(); }
+		return;
+	}
 	if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
 	const delta = (e.code === "BracketRight" || e.key === "]") ? 1
 		: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
@@ -3690,7 +3719,7 @@ function startSession(reader, doc, btn) {
 
 	const onKey = (e) => sessionKey(session, e, move);
 	const onClick = (e) => {
-		if (!pref("followClick")) return;
+		if (!clickOpens(e)) return;
 		const pageEl = e.target && e.target.closest && e.target.closest(".page");
 		if (!pageEl) return;
 		// A drag that selected text also ends in a click; leave that alone.
@@ -4278,7 +4307,7 @@ function startDomSession(reader, doc, btn, dv) {
 	};
 	const onKey = (e) => sessionKey(session, e, moveDom);
 	const onClick = (e) => {
-		if (!pref("followClick") || e.button !== 0) return;
+		if (!clickOpens(e) || e.button !== 0) return;
 		if (e.target && e.target.closest && e.target.closest("a[href]")) return;
 		try {
 			const sel = dv.win.getSelection();
@@ -4368,6 +4397,66 @@ function annotateKeyPressed(e) {
 	const other = mac ? e.ctrlKey : e.metaKey;
 	return e.code === spec.code && !!mod === spec.mod && !other
 		&& !!e.shiftKey === spec.shift && !!e.altKey === spec.alt;
+}
+
+// The reader copies a selection with Cmd/Ctrl-C and does nothing with the key
+// when there is none — which is exactly when the ruler knows what you are
+// reading. So the key is left alone whenever anything is selected, and copies
+// the step otherwise.
+function copyKeyPressed(e) {
+	if (!pref("copyUnit")) return false;
+	const mac = onMac();
+	const mod = mac ? e.metaKey : e.ctrlKey;
+	const other = mac ? e.ctrlKey : e.metaKey;
+	return e.code === "KeyC" && !!mod && !other && !e.shiftKey && !e.altKey;
+}
+
+function hasSelection(session) {
+	const view = session.kind === "dom" ? domViewOf(session.reader) : viewerOf(session.reader);
+	try {
+		const sel = view && view.win.getSelection();
+		if (sel && sel.rangeCount && !sel.isCollapsed) return true;
+	} catch (e) { /* no selection API in this view */ }
+	// A PDF's selection lives in the reader rather than in the text layer.
+	try {
+		const ranges = session.reader._internalReader._primaryView._selectionRanges;
+		return !!(ranges && ranges.length && !ranges[0].collapsed);
+	} catch (e) {
+		return false;
+	}
+}
+
+function copyCurrent(session) {
+	if (hasSelection(session)) return false;
+	const target = annotationTarget(session);
+	const text = target && target.text && target.text.trim();
+	if (!text) return false;
+	try {
+		Zotero.Utilities.Internal.copyTextToClipboard(text);
+	} catch (e) {
+		Zotero.debug("Sentence Focus: could not copy - " + e);
+		return false;
+	}
+	flash(session, "Copied", target.rect);
+	return true;
+}
+
+// A word where the eye already is, gone before it is in the way. Copying is
+// otherwise invisible: nothing is selected, so nothing changes on the page.
+function flash(session, text, rect) {
+	const doc = readerDoc(session);
+	const win = doc && doc.defaultView;
+	if (!win) return;
+	injectStyle(doc, "sfz-annotate-style", ANNOTATE_CSS);
+	const el = doc.createElement("div");
+	el.className = "sfz-toast";
+	el.textContent = text;
+	doc.body.append(el);
+	placeAnnotate(doc, el, rect);
+	win.setTimeout(() => {
+		el.classList.add("sfz-gone");
+		win.setTimeout(() => { try { el.remove(); } catch (e) { /* its document went */ } }, 300);
+	}, 750);
 }
 
 // Zotero's eight annotation colours, in Zotero's order, so the digits here
@@ -4610,7 +4699,26 @@ function openNotePane(reader, annotation) {
 			view._openAnnotationPopup();
 		} catch (e) {
 			Zotero.debug("Sentence Focus: could not open the annotation popup - " + e);
+			return;
 		}
+		focusComment(5);
+	};
+	// Zotero focuses the comment 50ms after the selection — before this popup
+	// exists, so its attempt finds nothing and the caret is left nowhere. The
+	// field is asked for again here, until the render that draws it has run.
+	// With the sidebar open the comment is edited there instead, which is
+	// where Zotero's own code looks too.
+	const focusComment = (tries) => {
+		try {
+			const doc = win.document;
+			const el = doc.querySelector(".annotation-popup .comment .content")
+				|| doc.querySelector(`[data-sidebar-annotation-id="${id}"] .comment .content`);
+			if (el) {
+				el.focus();
+				if (doc.activeElement === el) return;
+			}
+		} catch (e) { /* between renders */ }
+		if (tries > 0) win.setTimeout(() => focusComment(tries - 1), 80);
 	};
 	// The reader's own window, so the timer dies with the tab.
 	if (win && win.setTimeout) win.setTimeout(open, 80);
@@ -4647,6 +4755,11 @@ const ANNOTATE_CSS = `
 .sfz-pop-hint kbd{font:10.5px ui-monospace,monospace;padding:0 3px;border-radius:3px;
  border:1px solid color-mix(in srgb,CanvasText 28%,Canvas)}
 .sfz-pop-note{margin:0;font-size:11px;color:color-mix(in srgb,#d64545 80%,CanvasText)}
+.sfz-toast{position:fixed;z-index:100000;padding:4px 11px;border-radius:9px;
+ background:Canvas;color:CanvasText;border:1px solid color-mix(in srgb,CanvasText 16%,Canvas);
+ box-shadow:0 8px 22px rgba(0,0,0,.25);font:12px system-ui,sans-serif;pointer-events:none;
+ opacity:1;transition:opacity .3s ease}
+.sfz-toast.sfz-gone{opacity:0}
 `;
 
 let annotatePanel = null;   // { el, reader, cleanup } of the single open popup
@@ -5100,7 +5213,15 @@ function buildMenu(doc, reader) {
 
 	heading("Sentences");
 	toggle("mergeDisplay", "Equations join the sentence");
-	toggle("followClick", "Click moves the ruler");
+	toggle("copyUnit", `${onMac() ? "⌘C" : "Ctrl+C"} copies the step`,
+		"With nothing selected, the copy key puts the sentence the ruler is on on the clipboard.");
+
+	heading("Clicking the page");
+	chips("clickMoves", [
+		["click", "Moves the ruler", "A click on a sentence puts the ruler there."],
+		["mod-click", `${onMac() ? "⌘" : "Ctrl"}-click moves it`, "Only a modified click moves the ruler; a plain click is the reader's own."],
+		["off", "Does nothing", "The ruler is moved by the keys alone."],
+	]);
 
 	heading("Annotate with");
 	chips("annotateKey", ANNOTATE_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
@@ -5283,8 +5404,8 @@ const PREF_EFFECT = {
 	style: "paint", color: "paint", opacity: "paint", behind: "paint", padding: "paint",
 	granularity: "refocus",
 	mergeDisplay: "reanalyse",
-	autoScroll: "none", scrollMargin: "none", followClick: "none",
-	annotateKey: "none", annotateColor: "none", annotateType: "none",
+	autoScroll: "none", scrollMargin: "none", clickMoves: "none",
+	annotateKey: "none", annotateColor: "none", annotateType: "none", copyUnit: "none",
 };
 
 function applyPrefEffect(effect) {
@@ -5307,10 +5428,23 @@ let prefObservers = [];
 let version = "";
 let stopped = false;
 
+// Clicking the page was a checkbox until v0.29. Someone who had turned it off
+// meant it, so carry that across rather than quietly switching clicking back on.
+function migrateClickPref() {
+	try {
+		if (Zotero.Prefs.get(PREF("clickMoves"), true) !== undefined) return;
+		const old = Zotero.Prefs.get(PREF("followClick"), true);
+		if (old === undefined) return;
+		if (old === false) Zotero.Prefs.set(PREF("clickMoves"), "off", true);
+		Zotero.Prefs.clear(PREF("followClick"), true);
+	} catch (e) { /* nothing to carry over */ }
+}
+
 function startup({ id, version: pluginVersion, rootURI }) {
 	version = pluginVersion || "";
 	stopped = false;
 	Zotero.debug(`Sentence Focus ${version} starting`);
+	migrateClickPref();
 	Zotero.SentenceFocus = { PREF, DEFAULTS, version };
 	for (const [key, effect] of Object.entries(PREF_EFFECT)) {
 		if (effect === "none") continue;
@@ -5380,6 +5514,6 @@ if (typeof module !== "undefined") {
 		countRead, eraseCount, showCount,
 		blockText, textUnits, collectBlocks, blockUnits, domViewOf,
 		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
-		annotateColor, annotateType, placeAnnotate,
+		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
 	};
 }
