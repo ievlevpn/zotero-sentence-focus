@@ -3935,6 +3935,10 @@ function blocksOf(session, section) {
 		const root = dv && sectionRoots(dv)[section];
 		blocks = root ? collectBlocks(root, dv.win) : [];
 		blocks.detached = !sectionMounted(session, section);
+		// A book still opening has no sections yet, and the body it does have
+		// is not one: what is read from it now is not worth keeping.
+		const loading = !dv || !dv.view.renderers || !dv.view.renderers.length;
+		if (loading) return blocks;
 		session.blocks.set(section, blocks);
 		// A book's text never changes, but a long one has many sections: keep
 		// the ones near where the reader is.
