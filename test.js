@@ -28,6 +28,7 @@ const {
 	GRANULARITIES, STYLES, CSS, describePage, padBoxes, LIST_LABEL_RE,
 	countRead, eraseCount, showCount,
 	blockText, collectBlocks, blockUnits,
+	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -2927,6 +2928,64 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	const blocks = collectBlocks(root, win);
 	assert.deepStrictEqual(blocks.map((b) => b.text), ["The hallway smelt of boiled cabbage. At one end of it a poster."],
 		"hidden text is not part of the paragraph");
+}
+
+// The annotating shortcut. Zotero's reader and its main window have most of
+// the keyboard already, so the one this takes has to be matched exactly:
+// Cmd/Ctrl+Shift+H and nothing that merely looks like it.
+{
+	const key = (over) => Object.assign({ code: "KeyH", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }, over);
+	// On this machine `Zotero` does not exist, so the modifier is Ctrl.
+	assert.ok(annotateKeyPressed(key({ ctrlKey: true, shiftKey: true })), "the default shortcut fires");
+	assert.ok(!annotateKeyPressed(key({ ctrlKey: true })), "without Shift it is Zotero's own key");
+	assert.ok(!annotateKeyPressed(key({ shiftKey: true })), "Shift+H alone is a capital H");
+	assert.ok(!annotateKeyPressed(key({ ctrlKey: true, shiftKey: true, altKey: true })), "an extra Alt is a different chord");
+	assert.ok(!annotateKeyPressed(key({ ctrlKey: true, metaKey: true, shiftKey: true })), "Ctrl+Cmd+Shift+H is not it either");
+	assert.ok(!annotateKeyPressed(key({ code: "KeyU", ctrlKey: true, shiftKey: true })), "another letter is another shortcut");
+
+	assert.strictEqual(keyLabel(ANNOTATE_KEYS[0][1]), "Ctrl+Shift+H");
+	assert.strictEqual(keyLabel(null), "Off");
+	// Every shortcut offered is one the matcher can recognise, and "off" means off.
+	for (const [value, spec] of ANNOTATE_KEYS) {
+		if (value === "off") { assert.strictEqual(spec, null); continue; }
+		assert.ok(/^Key[A-Z]$/.test(spec.code), `${value} names a letter key`);
+	}
+	const pane = require("fs").readFileSync("prefs.xhtml", "utf8");
+	const options = /id="sf-annotate-key">([\s\S]*?)<\/html:select>/.exec(pane);
+	assert.ok(options, "the shortcut menu is in the Settings pane");
+	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
+	assert.deepStrictEqual(offered, ANNOTATE_KEYS.map(([value]) => value),
+		"Settings offers the same shortcuts the reader menu does");
+}
+
+// Zotero's own eight annotation colours, in Zotero's own order: the digits in
+// the popup have to pick what Alt-1..8 picks in the reader.
+{
+	assert.strictEqual(ANNOTATION_COLORS.length, 8);
+	assert.strictEqual(ANNOTATION_COLORS[0][0], "#ffd400");
+	for (const [hex, name] of ANNOTATION_COLORS) {
+		assert.ok(/^#[0-9a-f]{6}$/.test(hex), `${name} is a colour Zotero will store`);
+	}
+	assert.deepStrictEqual(ANNOTATION_TYPES.map(([v]) => v), ["highlight", "underline"]);
+}
+
+// The popup goes under what is being annotated, and never off the window.
+{
+	const panel = { offsetWidth: 240, offsetHeight: 150, style: {} };
+	const doc = { documentElement: { clientWidth: 1000, clientHeight: 700 } };
+	placeAnnotate(doc, panel, { left: 300, right: 500, top: 200, bottom: 220 });
+	assert.strictEqual(panel.style.left, "300px");
+	assert.strictEqual(panel.style.top, "228px", "under the sentence");
+	// A sentence near the bottom puts the popup above itself instead.
+	placeAnnotate(doc, panel, { left: 300, right: 500, top: 640, bottom: 660 });
+	assert.strictEqual(panel.style.top, "482px", "above the sentence");
+	// And one at the right edge is pulled back inside.
+	placeAnnotate(doc, panel, { left: 980, right: 995, top: 100, bottom: 120 });
+	assert.strictEqual(panel.style.left, "752px", "inside the right edge");
+	// With nothing to anchor to it still lands on the window.
+	placeAnnotate(doc, panel, null);
+	assert.strictEqual(panel.style.left, "380px");
+	assert.strictEqual(panel.style.top, "70px");
 }
 
 console.log("all tests passed");

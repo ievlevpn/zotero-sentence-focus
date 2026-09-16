@@ -29,6 +29,9 @@ const DEFAULTS = {
 	scrollMargin: 30,           // percent of the viewer height to keep clear at the top
 	mergeDisplay: false,        // fold display equations into the neighbouring sentence
 	followClick: true,
+	annotateKey: "mod-shift-h",  // mod-shift-h | mod-shift-u | alt-h | off
+	annotateColor: "#ffd400",    // last colour used for an annotation
+	annotateType: "highlight",   // highlight | underline
 };
 
 function pref(key) {
@@ -3641,6 +3644,29 @@ function isTypingTarget(target) {
 	return !!el;
 }
 
+// One keyboard handler for both kinds of session: the step keys, and the key
+// that offers to annotate what the ruler is on. While that popup is open it
+// has the keyboard to itself — `[` and `]` are letters to it, not steps.
+function sessionKey(session, e, step) {
+	if (isTypingTarget(e.target)) return;
+	if (annotateKeyPressed(e)) {
+		e.preventDefault();
+		e.stopPropagation();
+		toggleAnnotate(session);
+		return;
+	}
+	if (annotateOpenFor(session)) return;
+	if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+	const delta = (e.code === "BracketRight" || e.key === "]") ? 1
+		: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
+	if (!delta) return;
+	e.preventDefault();
+	e.stopPropagation();
+	enqueue(session, async () => {
+		if (await step(session, delta) && delta > 0) countRead(session.reader);
+	});
+}
+
 // `[` and `]` are the same keys line_focus uses and collide with nothing in
 // the reader. They are taken on the way down, in both the reader document and
 // the nested pdf.js one, because whichever has focus is where the key lands.
@@ -3662,18 +3688,7 @@ function startSession(reader, doc, btn) {
 		queue: Promise.resolve(),
 	};
 
-	const onKey = (e) => {
-		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-		if (isTypingTarget(e.target)) return;
-		const delta = (e.code === "BracketRight" || e.key === "]") ? 1
-			: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
-		if (!delta) return;
-		e.preventDefault();
-		e.stopPropagation();
-		enqueue(session, async () => {
-			if (await move(session, delta) && delta > 0) countRead(session.reader);
-		});
-	};
+	const onKey = (e) => sessionKey(session, e, move);
 	const onClick = (e) => {
 		if (!pref("followClick")) return;
 		const pageEl = e.target && e.target.closest && e.target.closest(".page");
@@ -3738,6 +3753,7 @@ function stopSession(reader) {
 	if (!session) return;
 	sessions.delete(reader);
 	if (openMenuPanel && openMenuPanel.reader === reader) closeMenu();
+	if (annotatePanel && annotatePanel.reader === reader) closeAnnotate();
 	try { session.clear ? session.clear() : clearPaint(session); } catch (e) { /* its document is unloading */ }
 	for (const off of session.handlers) {
 		try { off(); } catch (e) { /* document already gone */ }
@@ -4260,18 +4276,7 @@ function startDomSession(reader, doc, btn, dv) {
 		handlers: [], painted: [], inflight: new Map(),
 		queue: Promise.resolve(),
 	};
-	const onKey = (e) => {
-		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-		if (isTypingTarget(e.target)) return;
-		const delta = (e.code === "BracketRight" || e.key === "]") ? 1
-			: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
-		if (!delta) return;
-		e.preventDefault();
-		e.stopPropagation();
-		enqueue(session, async () => {
-			if (await moveDom(session, delta) && delta > 0) countRead(session.reader);
-		});
-	};
+	const onKey = (e) => sessionKey(session, e, moveDom);
 	const onClick = (e) => {
 		if (!pref("followClick") || e.button !== 0) return;
 		if (e.target && e.target.closest && e.target.closest("a[href]")) return;
@@ -4315,6 +4320,519 @@ function startDomSession(reader, doc, btn, dv) {
 	sessions.set(reader, session);
 	enqueue(session, () => focusDomVisible(session));
 	return session;
+}
+
+// --- annotating what the ruler marks ---------------------------------------
+
+// Zotero's reader has already spent most of its keyboard: Ctrl-Alt-1/2/3 turn
+// a selection into a highlight, underline or note, Alt-1..8 pick a colour, and
+// the bare letters belong to read-aloud. Zotero's own window takes Cmd/Ctrl-
+// Shift with most letters — but not H, which is free and says what it does.
+// The alternatives are here for anyone whose system has claimed it already.
+const ANNOTATE_KEYS = [
+	["mod-shift-h", { code: "KeyH", mod: true, shift: true, alt: false }],
+	["mod-shift-u", { code: "KeyU", mod: true, shift: true, alt: false }],
+	["alt-h", { code: "KeyH", mod: false, shift: false, alt: true }],
+	["off", null],
+];
+
+function onMac() {
+	try { return !!Zotero.isMac; } catch (e) { return false; }
+}
+
+function keyLabel(spec) {
+	if (!spec) return "Off";
+	const mac = onMac();
+	let s = "";
+	if (spec.mod) s += mac ? "⌘" : "Ctrl+";
+	if (spec.shift) s += mac ? "⇧" : "Shift+";
+	if (spec.alt) s += mac ? "⌥" : "Alt+";
+	return s + spec.code.replace(/^Key/, "");
+}
+
+function annotateKeySpec() {
+	const want = String(pref("annotateKey"));
+	const found = ANNOTATE_KEYS.find(([value]) => value === want);
+	return (found || ANNOTATE_KEYS[0])[1];
+}
+
+// The one modifier that means "the application's own shortcut" is Cmd on a
+// Mac and Ctrl everywhere else; the other one must be up, or Ctrl-Cmd-Shift-H
+// would fire this as well.
+function annotateKeyPressed(e) {
+	const spec = annotateKeySpec();
+	if (!spec) return false;
+	const mac = onMac();
+	const mod = mac ? e.metaKey : e.ctrlKey;
+	const other = mac ? e.ctrlKey : e.metaKey;
+	return e.code === spec.code && !!mod === spec.mod && !other
+		&& !!e.shiftKey === spec.shift && !!e.altKey === spec.alt;
+}
+
+// Zotero's eight annotation colours, in Zotero's order, so the digits here
+// pick the same colour the reader's own Alt-1..8 do.
+const ANNOTATION_COLORS = [
+	["#ffd400", "Yellow"], ["#ff6666", "Red"], ["#5fb236", "Green"], ["#2ea8e5", "Blue"],
+	["#a28ae5", "Purple"], ["#e56eee", "Magenta"], ["#f19837", "Orange"], ["#aaaaaa", "Grey"],
+];
+const ANNOTATION_TYPES = [["highlight", "Highlight"], ["underline", "Underline"]];
+
+function annotateColor() {
+	const c = String(pref("annotateColor")).toLowerCase();
+	return ANNOTATION_COLORS.some(([hex]) => hex === c) ? c : ANNOTATION_COLORS[0][0];
+}
+
+function annotateType() {
+	const t = String(pref("annotateType"));
+	return t === "underline" ? "underline" : "highlight";
+}
+
+// The document the reader's toolbar lives in — where the popup is put, so that
+// it can sit over the page without being clipped by the view's own iframe.
+function readerDoc(session) {
+	const btn = session.btn;
+	if (btn && btn.ownerDocument) return btn.ownerDocument;
+	try { return session.reader._iframeWindow.document; } catch (e) { return null; }
+}
+
+// A rect inside the view's iframe, moved into the coordinates of the document
+// the popup is placed in.
+function frameRect(win, rect) {
+	if (!rect) return null;
+	let dx = 0, dy = 0;
+	try {
+		const frame = win.frameElement;
+		if (frame) {
+			const box = frame.getBoundingClientRect();
+			dx = box.left; dy = box.top;
+		}
+	} catch (e) { /* the frame is not reachable from here; assume no offset */ }
+	return {
+		left: rect.left + dx, right: rect.right + dx,
+		top: rect.top + dy, bottom: rect.bottom + dy,
+	};
+}
+
+function unitClientRect(pv, unit) {
+	const page = pv.div.getBoundingClientRect();
+	if (!page.height) return null;
+	let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+	for (const r of unit.rects) {
+		const b = toPercent(r, pv.viewport);
+		left = Math.min(left, page.left + b.left / 100 * page.width);
+		right = Math.max(right, page.left + (b.left + b.width) / 100 * page.width);
+		top = Math.min(top, page.top + b.top / 100 * page.height);
+		bottom = Math.max(bottom, page.top + (b.top + b.height) / 100 * page.height);
+	}
+	return left === Infinity ? null : { left, top, right, bottom };
+}
+
+function rangeClientRect(win, range) {
+	try {
+		const box = range.getBoundingClientRect();
+		return box && box.height ? frameRect(win, box) : null;
+	} catch (e) {
+		return null;
+	}
+}
+
+// What the annotation will be made from: whatever the user has selected, and
+// failing that the unit the ruler is on. Both are resolved now rather than
+// when the popup is answered — a selection can be lost to a stray click while
+// the popup is open, and the ruler can be stepped from the sidebar.
+function annotationTarget(session) {
+	return session.kind === "dom" ? domAnnotationTarget(session) : pdfAnnotationTarget(session);
+}
+
+function pdfAnnotationTarget(session) {
+	const v = viewerOf(session.reader);
+	const view = session.reader._internalReader && session.reader._internalReader._primaryView;
+	if (!v || !view) return null;
+
+	const ranges = view._selectionRanges;
+	if (ranges && ranges.length && !ranges[0].collapsed) {
+		// The reader keeps the text of its own selection: the text layer reads
+		// differently, because it is glyph boxes rather than the page's words.
+		let text = ranges.map((r) => r.text || "").join(" ").trim();
+		let rect = null;
+		try {
+			const sel = v.win.getSelection();
+			if (!text) text = String(sel);
+			if (sel.rangeCount) rect = rangeClientRect(v.win, sel.getRangeAt(0));
+		} catch (e) { /* the text layer is between renders */ }
+		return {
+			from: "selection", text, rect,
+			make: (type, color) => view._getAnnotationFromSelectionRanges(ranges, type, color),
+		};
+	}
+
+	const unit = currentUnit(session);
+	if (!unit || !unit.rects.length) return null;
+	const position = {
+		pageIndex: session.pageIndex,
+		rects: unit.rects.map((r) => [
+			Math.min(r[0], r[2]), Math.min(r[1], r[3]),
+			Math.max(r[0], r[2]), Math.max(r[1], r[3]),
+		]),
+	};
+	const pv = pageViewOf(v, session.pageIndex);
+	return {
+		from: "unit",
+		built: true,          // made here, so it has to be carried into the reader
+		text: unit.text,
+		rect: pv ? frameRect(v.win, unitClientRect(pv, unit)) : null,
+		make: (type, color) => {
+			const meta = annotationMeta(session.reader, view, position);
+			if (!meta) return null;
+			return {
+				type, color, text: unit.text,
+				pageLabel: meta.pageLabel, sortIndex: meta.sortIndex,
+				position,
+			};
+		},
+	};
+}
+
+// Zotero works out where an annotation sorts in the sidebar, and what page
+// label to show, from the page's own text. If it cannot — a page whose data
+// has not been loaded — the position alone still sorts pages in order.
+function annotationMeta(reader, view, position) {
+	try {
+		const meta = Cu.waiveXrays(view.getAnnotationMeta(cloneForReader(reader, position)));
+		if (meta && meta.sortIndex) return { sortIndex: String(meta.sortIndex), pageLabel: String(meta.pageLabel || "") };
+	} catch (e) {
+		Zotero.debug("Sentence Focus: no annotation meta - " + e);
+	}
+	const top = Math.max(0, Math.round(position.rects[0][3]));
+	return {
+		sortIndex: [
+			String(position.pageIndex).slice(0, 5).padStart(5, "0"),
+			"000000",
+			String(top).slice(0, 5).padStart(5, "0"),
+		].join("|"),
+		pageLabel: "",
+	};
+}
+
+// The reader runs in a content window; a plain object made here is opaque to
+// it until it is cloned across.
+function cloneForReader(reader, obj) {
+	try { return Cu.cloneInto(obj, reader._iframeWindow); } catch (e) { return obj; }
+}
+
+function domAnnotationTarget(session) {
+	const dv = domViewOf(session.reader);
+	if (!dv) return null;
+	let range = null, from = "unit", text = "";
+	try {
+		const sel = dv.win.getSelection();
+		if (sel && sel.rangeCount && !sel.isCollapsed) {
+			range = sel.getRangeAt(0).cloneRange();
+			from = "selection";
+			text = String(sel);
+		}
+	} catch (e) { /* no selection API in this view */ }
+	if (!range) {
+		const unit = currentDomUnit(session);
+		if (!unit) return null;
+		try { range = rangeOf(dv.doc, unit); } catch (e) { return null; }
+		text = unit.text;
+	}
+	return {
+		from, text,
+		rect: rangeClientRect(dv.win, range),
+		make: (type, color) => {
+			const annotation = dv.view.getAnnotationFromRange(range, type, color);
+			if (!annotation) return null;
+			return dv.view._finalizeAnnotation ? dv.view._finalizeAnnotation(annotation) : annotation;
+		},
+	};
+}
+
+function annotationManager(reader) {
+	try {
+		return reader._internalReader && reader._internalReader._annotationManager;
+	} catch (e) {
+		return null;
+	}
+}
+
+function isReadOnly(reader) {
+	const manager = annotationManager(reader);
+	try { return !manager || !!manager._readOnly; } catch (e) { return false; }
+}
+
+// Make the annotation and hand it to Zotero, which saves it to the library and
+// draws it. Selecting it afterwards is what opens the annotation popup, where
+// a comment and tags can be typed — the same thing a click on a new highlight
+// does.
+function createAnnotation(session, target, type, color, withNote) {
+	const reader = session.reader;
+	const manager = annotationManager(reader);
+	if (!manager) return null;
+	const annotation = target.make(type, color);
+	if (!annotation) return null;
+	const saved = manager.addAnnotation(target.built ? cloneForReader(reader, annotation) : annotation);
+	if (!saved) return null;
+	if (withNote) {
+		try {
+			reader._internalReader.setSelectedAnnotations([saved.id], true);
+			const view = reader._internalReader._primaryView;
+			if (view && view._openAnnotationPopup) view._openAnnotationPopup();
+		} catch (e) {
+			Zotero.debug("Sentence Focus: could not open the annotation popup - " + e);
+		}
+	}
+	return saved;
+}
+
+const ANNOTATE_CSS = `
+.sfz-pop{position:fixed;z-index:100000;box-sizing:border-box;min-width:19em;max-width:23em;
+ background:Canvas;color:CanvasText;border:1px solid color-mix(in srgb,CanvasText 16%,Canvas);
+ border-radius:12px;box-shadow:0 14px 38px rgba(0,0,0,.30);padding:11px 12px 9px;
+ font:13px system-ui,sans-serif;display:flex;flex-direction:column;gap:9px}
+.sfz-pop:focus{outline:none}
+.sfz-pop-title{font-weight:600;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.sfz-pop-title span{color:GrayText;font-weight:400;font-size:11px}
+.sfz-pop-quote{margin:0;color:GrayText;font-size:11.5px;line-height:1.35;font-style:italic;
+ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sfz-dots{display:flex;gap:6px}
+.sfz-dot{width:24px;height:24px;border-radius:50%;padding:0;cursor:pointer;
+ border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(0,0,0,.20);
+ transition:transform .12s ease,border-color .12s ease}
+.sfz-dot:hover{transform:scale(1.12)}
+.sfz-dot[aria-checked=true]{border-color:CanvasText;transform:scale(1.12)}
+.sfz-seg{display:flex;gap:3px;padding:2px;border-radius:9px;
+ background:color-mix(in srgb,CanvasText 9%,Canvas)}
+.sfz-seg button{flex:1;border:0;background:transparent;color:inherit;font:inherit;
+ padding:4px 8px;border-radius:7px;cursor:pointer}
+.sfz-seg button[aria-pressed=true]{background:Canvas;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.22)}
+.sfz-acts{display:flex;gap:6px}
+.sfz-act{flex:1;font:inherit;padding:5px 9px;border-radius:8px;cursor:pointer;white-space:nowrap;
+ border:1px solid color-mix(in srgb,CanvasText 22%,Canvas);background:transparent;color:inherit}
+.sfz-act.sfz-primary{background:Highlight;border-color:Highlight;color:HighlightText;font-weight:600}
+.sfz-pop button:focus-visible,.sfz-dot:focus-visible{outline:2px solid Highlight;outline-offset:2px}
+.sfz-pop-hint{margin:0;color:GrayText;font-size:10.5px;line-height:1.6}
+.sfz-pop-hint kbd{font:10.5px ui-monospace,monospace;padding:0 3px;border-radius:3px;
+ border:1px solid color-mix(in srgb,CanvasText 28%,Canvas)}
+.sfz-pop-note{margin:0;font-size:11px;color:color-mix(in srgb,#d64545 80%,CanvasText)}
+`;
+
+let annotatePanel = null;   // { el, reader, cleanup } of the single open popup
+
+function closeAnnotate() {
+	if (!annotatePanel) return;
+	const panel = annotatePanel;
+	annotatePanel = null;   // null first: a torn-down document makes cleanup throw
+	try { panel.cleanup(); panel.el.remove(); } catch (e) { /* already gone */ }
+}
+
+const annotateOpenFor = (session) => !!annotatePanel && annotatePanel.reader === session.reader;
+
+function toggleAnnotate(session) {
+	if (annotateOpenFor(session)) { closeAnnotate(); return; }
+	openAnnotate(session);
+}
+
+// A small panel that can be driven entirely from the keyboard: the colours are
+// a radio group under the arrow keys and the digits, H and U choose the kind of
+// mark, Enter makes it, N makes it and opens Zotero's own popup for a comment
+// and tags.
+function openAnnotate(session) {
+	closeAnnotate();
+	closeMenu();
+	const doc = readerDoc(session);
+	if (!doc) return;
+	const target = annotationTarget(session);
+	injectStyle(doc, "sfz-annotate-style", ANNOTATE_CSS);
+
+	const make = (tag, cls, text) => {
+		const el = doc.createElement(tag);
+		if (cls) el.className = cls;
+		if (text != null) el.textContent = text;
+		return el;
+	};
+	const panel = make("div", "sfz-pop");
+	panel.tabIndex = -1;
+	panel.setAttribute("role", "dialog");
+	panel.setAttribute("aria-label", "Annotate");
+
+	const state = { color: annotateColor(), type: annotateType() };
+	const title = make("div", "sfz-pop-title");
+	const heading = make("strong", null, "Annotate");
+	title.append(heading, make("span", null, target ? (target.from === "selection" ? "selection" : granularity()) : ""));
+	panel.append(title);
+
+	// Nothing to mark, or nothing that may be marked: say so and stop there
+	// rather than offering colours that would go nowhere.
+	const blocked = !target ? "Nothing to annotate: select some text, or put the ruler on a sentence."
+		: isReadOnly(session.reader) ? "This file is read-only, so it cannot be annotated." : "";
+	if (blocked) panel.append(make("p", "sfz-pop-note", blocked));
+	if (target && target.text) panel.append(make("p", "sfz-pop-quote", `“${target.text.replace(/\s+/g, " ").slice(0, 160)}”`));
+
+	const dots = make("div", "sfz-dots");
+	dots.setAttribute("role", "radiogroup");
+	dots.setAttribute("aria-label", "Colour");
+	const showColor = () => {
+		for (const dot of dots.children) {
+			const on = dot.dataset.color === state.color;
+			dot.setAttribute("aria-checked", String(on));
+			dot.tabIndex = on ? 0 : -1;
+		}
+	};
+	const pickColor = (hex, focus) => {
+		state.color = hex;
+		showColor();
+		if (focus) {
+			const dot = [...dots.children].find((d) => d.dataset.color === hex);
+			if (dot) dot.focus();
+		}
+	};
+	ANNOTATION_COLORS.forEach(([hex, name], i) => {
+		const dot = make("button", "sfz-dot");
+		dot.dataset.color = hex;
+		dot.style.background = hex;
+		dot.setAttribute("role", "radio");
+		dot.title = `${name} (${i + 1})`;
+		dot.setAttribute("aria-label", name);
+		dot.addEventListener("click", () => { pickColor(hex, false); apply(false); });
+		dots.append(dot);
+	});
+	showColor();
+	if (!blocked) panel.append(dots);
+
+	const seg = make("div", "sfz-seg");
+	const primary = make("button", "sfz-act sfz-primary", "Highlight");
+	const showType = () => {
+		for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.type === state.type));
+		primary.textContent = state.type === "underline" ? "Underline it" : "Highlight it";
+	};
+	for (const [value, label] of ANNOTATION_TYPES) {
+		const b = make("button", null, label);
+		b.dataset.type = value;
+		b.title = `${label} (${label[0]})`;
+		b.addEventListener("click", () => { state.type = value; showType(); });
+		seg.append(b);
+	}
+	if (!blocked) panel.append(seg);
+
+	const note = make("p", "sfz-pop-note");
+	note.hidden = true;
+
+	const apply = (withNote) => {
+		if (blocked) { closeAnnotate(); return; }
+		let saved = null;
+		try {
+			saved = createAnnotation(session, target, state.type, state.color, withNote);
+		} catch (e) {
+			Zotero.debug("Sentence Focus: annotation failed - " + ((e && e.stack) || e));
+		}
+		if (saved) {
+			setPref("annotateColor", state.color);
+			setPref("annotateType", state.type);
+			closeAnnotate();
+			return;
+		}
+		note.textContent = isReadOnly(session.reader)
+			? "This file is read-only, so it cannot be annotated."
+			: "Zotero would not take that as an annotation.";
+		note.hidden = false;
+	};
+
+	const acts = make("div", "sfz-acts");
+	primary.addEventListener("click", () => apply(false));
+	const noteBtn = make("button", "sfz-act", "Add note…");
+	noteBtn.title = "Make the annotation and open Zotero's popup for a comment and tags.";
+	noteBtn.addEventListener("click", () => apply(true));
+	acts.append(primary, noteBtn);
+	if (!blocked) { panel.append(acts); panel.append(note); }
+
+	const hint = make("p", "sfz-pop-hint");
+	if (blocked) hint.append(make("kbd", null, "Esc"), doc.createTextNode(" closes this"));
+	else hint.append(
+		make("kbd", null, "1"), doc.createTextNode("–"), make("kbd", null, "8"),
+		doc.createTextNode(" colour · "),
+		make("kbd", null, "H"), doc.createTextNode("/"), make("kbd", null, "U"),
+		doc.createTextNode(" kind · "),
+		make("kbd", null, "↵"), doc.createTextNode(" mark · "),
+		make("kbd", null, "N"), doc.createTextNode(" note"),
+	);
+	panel.append(hint);
+	showType();
+
+	doc.body.append(panel);
+	placeAnnotate(doc, panel, target && target.rect);
+
+	const onPanelKey = (e) => {
+		const key = e.key;
+		const stop = () => { e.preventDefault(); e.stopPropagation(); };
+		const at = ANNOTATION_COLORS.findIndex(([hex]) => hex === state.color);
+		if (key === "Escape") { stop(); closeAnnotate(); return; }
+		// A panel that says why it can do nothing answers to nothing else.
+		if (blocked) { if (key === "Enter") { stop(); closeAnnotate(); } return; }
+		if (key === "Enter" || key === " ") {
+			// Space and Enter on a button are that button's own business.
+			if (e.target && e.target.tagName === "BUTTON" && e.target.className !== "sfz-dot") return;
+			stop(); apply(false); return;
+		}
+		if (key === "n" || key === "N") { stop(); apply(true); return; }
+		if (key === "h" || key === "H") { stop(); state.type = "highlight"; showType(); return; }
+		if (key === "u" || key === "U") { stop(); state.type = "underline"; showType(); return; }
+		// A digit is a colour and a decision at once, as clicking one is: the
+		// arrows are there for picking a colour without committing to it.
+		if (key >= "1" && key <= "8") {
+			stop();
+			pickColor(ANNOTATION_COLORS[Number(key) - 1][0], false);
+			apply(false);
+			return;
+		}
+		if (key === "ArrowRight" || key === "ArrowDown") {
+			stop(); pickColor(ANNOTATION_COLORS[(at + 1) % ANNOTATION_COLORS.length][0], true); return;
+		}
+		if (key === "ArrowLeft" || key === "ArrowUp") {
+			stop();
+			pickColor(ANNOTATION_COLORS[(at - 1 + ANNOTATION_COLORS.length) % ANNOTATION_COLORS.length][0], true);
+		}
+	};
+	panel.addEventListener("keydown", onPanelKey);
+
+	// Dismissal, from either document: the view is in an iframe of its own, so
+	// a click on the page never reaches the document the popup is in.
+	const onDown = (e) => { if (!panel.contains(e.target)) closeAnnotate(); };
+	const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeAnnotate(); } };
+	const v = viewerOf(session.reader) || domViewOf(session.reader);
+	const docs = [doc, v && v.doc].filter((d, i, a) => d && a.indexOf(d) === i);
+	for (const d of docs) {
+		d.addEventListener("pointerdown", onDown, true);
+		d.addEventListener("keydown", onKey, true);
+	}
+	annotatePanel = {
+		el: panel,
+		reader: session.reader,
+		cleanup: () => {
+			for (const d of docs) {
+				d.removeEventListener("pointerdown", onDown, true);
+				d.removeEventListener("keydown", onKey, true);
+			}
+		},
+	};
+	// Focus the chosen colour, so the arrow keys work without a click first.
+	const chosen = blocked ? null : [...dots.children].find((d) => d.getAttribute("aria-checked") === "true");
+	try { (chosen || panel).focus({ preventScroll: true }); } catch (e) { panel.focus(); }
+}
+
+// Under what is being annotated, or above it when there is no room — and never
+// off the edge of the window.
+function placeAnnotate(doc, panel, rect) {
+	const W = doc.documentElement.clientWidth || 900;
+	const H = doc.documentElement.clientHeight || 600;
+	const w = panel.offsetWidth || 240;
+	const h = panel.offsetHeight || 150;
+	let left = rect ? rect.left : (W - w) / 2;
+	let top = rect ? rect.bottom + 8 : 70;
+	if (top + h > H - 8) top = rect ? rect.top - h - 8 : H - h - 8;
+	panel.style.left = `${Math.max(8, Math.min(left, W - w - 8))}px`;
+	panel.style.top = `${Math.max(8, Math.min(top, H - h - 8))}px`;
 }
 
 // --- reading counter -------------------------------------------------------
@@ -4553,15 +5071,22 @@ function buildMenu(doc, reader) {
 	toggle("mergeDisplay", "Equations join the sentence");
 	toggle("followClick", "Click moves the ruler");
 
+	heading("Annotate with");
+	chips("annotateKey", ANNOTATE_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
+		? `Press ${keyLabel(spec)} to mark what the ruler is on — or what you have selected — as a Zotero annotation.`
+		: "No shortcut; nothing listens for one."]));
+
 	const diagnostics = make("button", "sfz-chip sfz-diag", "Copy page diagnostics");
 	diagnostics.title = "How this page was read, for reporting a mis-highlight.";
 	diagnostics.addEventListener("click", () => copyDiagnostics(reader, diagnostics));
 	panel.append(diagnostics);
 
 	const foot = make("p", "sfz-foot");
+	const spec = annotateKeySpec();
 	foot.append(
 		doc.createTextNode("Step with "),
 		make("kbd", null, "["), doc.createTextNode(" and "), make("kbd", null, "]"),
+		...(spec ? [doc.createTextNode(", annotate with "), make("kbd", null, keyLabel(spec))] : []),
 		doc.createTextNode(". Right-click the ¶ button for this menu."),
 		make("span", "sfz-version", version ? ` v${version}` : ""),
 	);
@@ -4728,6 +5253,7 @@ const PREF_EFFECT = {
 	granularity: "refocus",
 	mergeDisplay: "reanalyse",
 	autoScroll: "none", scrollMargin: "none", followClick: "none",
+	annotateKey: "none", annotateColor: "none", annotateType: "none",
 };
 
 function applyPrefEffect(effect) {
@@ -4781,6 +5307,7 @@ function startup({ id, version: pluginVersion, rootURI }) {
 function shutdown() {
 	stopped = true;
 	closeMenu();
+	closeAnnotate();
 	for (const reader of [...sessions.keys()]) stopSession(reader);
 	for (const set of [badges, buttons]) {
 		for (const ref of set) {
@@ -4821,5 +5348,7 @@ if (typeof module !== "undefined") {
 		pageLuminance, CSS, STYLES,
 		countRead, eraseCount, showCount,
 		blockText, textUnits, collectBlocks, blockUnits, domViewOf,
+		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
+		annotateColor, annotateType, placeAnnotate,
 	};
 }

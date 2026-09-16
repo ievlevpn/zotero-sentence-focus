@@ -23,7 +23,8 @@
 		const $ = (id) => document.getElementById(id);
 
 		// [element id, pref key] for each kind of control.
-		const menus = [["sf-granularity", "granularity"], ["sf-style", "style"], ["sf-autoscroll", "autoScroll"]];
+		const menus = [["sf-granularity", "granularity"], ["sf-style", "style"], ["sf-autoscroll", "autoScroll"],
+			["sf-annotate-key", "annotateKey"]];
 		const checks = [["sf-behind", "behind"], ["sf-merge", "mergeDisplay"], ["sf-click", "followClick"]];
 		const sliders = [["sf-opacity", "opacity"], ["sf-padding", "padding"], ["sf-margin", "scrollMargin"]];
 

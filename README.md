@@ -8,6 +8,15 @@ line at a time. It works in PDFs, EPUBs and saved web pages.
 Press `]` to step forward, `[` to step back, or click a sentence to jump to it.
 You can also step by word, line or paragraph.
 
+Press `Cmd/Ctrl+Shift+H` to keep what you are reading: the sentence under the
+ruler — or whatever you have selected — becomes a Zotero highlight or underline.
+
+![The annotating panel over a sentence](docs/screenshot-annotate.png)
+
+The panel is made for the keyboard: `1`–`8` pick a colour and mark it, `H` and
+`U` choose highlight or underline, `Enter` marks it in the last colour you used,
+and `N` marks it and opens Zotero's own popup for a comment and tags.
+
 ## Install
 
 1. Download `sentence-focus.xpi` from
@@ -17,7 +26,8 @@ You can also step by word, line or paragraph.
 3. Open a document and click the **¶** button in the reader's toolbar.
 
 Right-click **¶** for the settings — step size, colour, highlight style,
-scrolling — which are also under **Zotero → Settings → Sentence Focus**. A small
+scrolling, the annotating shortcut — which are also under
+**Zotero → Settings → Sentence Focus**. A small
 number on the button counts what you have read in that tab.
 
 Zotero 7 or later. In Zotero 7 the highlight in books and web pages is drawn as
@@ -87,6 +97,7 @@ the page a line at a time. The difference is what one step is:
 | Tables | line by line | a row at a time |
 | Formats | PDF | PDF, EPUB, web snapshot |
 | Placing the ruler | keys | keys, or click a sentence |
+| Annotating | — | one key turns the sentence into a Zotero highlight |
 
 If you want a plain band that follows lines, line_focus is the simpler tool.
 This one is for dense prose, where the sentence rather than the line is the unit
