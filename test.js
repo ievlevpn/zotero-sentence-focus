@@ -2932,18 +2932,22 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 
 // The annotating shortcut. Zotero's reader and its main window have most of
 // the keyboard already, so the one this takes has to be matched exactly:
-// Cmd/Ctrl+Shift+H and nothing that merely looks like it.
+// Alt/Option+H and nothing that merely looks like it.
 {
 	const key = (over) => Object.assign({ code: "KeyH", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }, over);
-	// On this machine `Zotero` does not exist, so the modifier is Ctrl.
-	assert.ok(annotateKeyPressed(key({ ctrlKey: true, shiftKey: true })), "the default shortcut fires");
-	assert.ok(!annotateKeyPressed(key({ ctrlKey: true })), "without Shift it is Zotero's own key");
-	assert.ok(!annotateKeyPressed(key({ shiftKey: true })), "Shift+H alone is a capital H");
-	assert.ok(!annotateKeyPressed(key({ ctrlKey: true, shiftKey: true, altKey: true })), "an extra Alt is a different chord");
-	assert.ok(!annotateKeyPressed(key({ ctrlKey: true, metaKey: true, shiftKey: true })), "Ctrl+Cmd+Shift+H is not it either");
-	assert.ok(!annotateKeyPressed(key({ code: "KeyU", ctrlKey: true, shiftKey: true })), "another letter is another shortcut");
+	assert.ok(annotateKeyPressed(key({ altKey: true })), "the default shortcut fires");
+	// On a Mac, Option+H types "˙" — the key code is what identifies it, and
+	// the event's `key` is never looked at.
+	assert.ok(annotateKeyPressed(Object.assign(key({ altKey: true }), { key: "˙" })), "and fires when Option has changed the character");
+	assert.ok(!annotateKeyPressed(key({})), "a bare H types an H");
+	assert.ok(!annotateKeyPressed(key({ altKey: true, shiftKey: true })), "an extra Shift is a different chord");
+	assert.ok(!annotateKeyPressed(key({ altKey: true, ctrlKey: true })), "so is Ctrl-Alt-H, which the reader may want");
+	assert.ok(!annotateKeyPressed(key({ altKey: true, metaKey: true })), "and Cmd+Alt+H is macOS hiding windows");
+	assert.ok(!annotateKeyPressed(key({ code: "KeyU", altKey: true })), "another letter is another shortcut");
+	// The other offered chords are matched only when they are the chosen one.
+	assert.ok(!annotateKeyPressed(key({ ctrlKey: true, shiftKey: true })), "Ctrl+Shift+H is not the default");
 
-	assert.strictEqual(keyLabel(ANNOTATE_KEYS[0][1]), "Ctrl+Shift+H");
+	assert.strictEqual(keyLabel(ANNOTATE_KEYS[0][1]), "Alt+H");
 	assert.strictEqual(keyLabel(null), "Off");
 	// Every shortcut offered is one the matcher can recognise, and "off" means off.
 	for (const [value, spec] of ANNOTATE_KEYS) {

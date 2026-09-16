@@ -8,7 +8,7 @@ line at a time. It works in PDFs, EPUBs and saved web pages.
 Press `]` to step forward, `[` to step back, or click a sentence to jump to it.
 You can also step by word, line or paragraph.
 
-Press `Cmd/Ctrl+Shift+H` to keep what you are reading: the sentence under the
+Press `Option+H` (`Alt+H`) to keep what you are reading: the sentence under the
 ruler — or whatever you have selected — becomes a Zotero highlight or underline.
 
 ![The annotating panel over a sentence](docs/screenshot-annotate.png)

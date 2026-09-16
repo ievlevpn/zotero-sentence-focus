@@ -29,7 +29,7 @@ const DEFAULTS = {
 	scrollMargin: 30,           // percent of the viewer height to keep clear at the top
 	mergeDisplay: false,        // fold display equations into the neighbouring sentence
 	followClick: true,
-	annotateKey: "mod-shift-h",  // mod-shift-h | mod-shift-u | alt-h | off
+	annotateKey: "alt-h",        // alt-h | mod-shift-h | mod-shift-u | off
 	annotateColor: "#ffd400",    // last colour used for an annotation
 	annotateType: "highlight",   // highlight | underline
 };
@@ -4325,14 +4325,15 @@ function startDomSession(reader, doc, btn, dv) {
 // --- annotating what the ruler marks ---------------------------------------
 
 // Zotero's reader has already spent most of its keyboard: Ctrl-Alt-1/2/3 turn
-// a selection into a highlight, underline or note, Alt-1..8 pick a colour, and
-// the bare letters belong to read-aloud. Zotero's own window takes Cmd/Ctrl-
-// Shift with most letters — but not H, which is free and says what it does.
-// The alternatives are here for anyone whose system has claimed it already.
+// a selection into a highlight, underline or note, Alt-1..8 pick a colour and
+// Alt with the arrows moves one, and the bare letters belong to read-aloud.
+// Alt/Option with a letter is free there, and free in Zotero's window too.
+// Cmd-Shift-H is the obvious mnemonic but macOS has taken it (Finder's Go →
+// Home), so it is offered as an alternative rather than used by default.
 const ANNOTATE_KEYS = [
+	["alt-h", { code: "KeyH", mod: false, shift: false, alt: true }],
 	["mod-shift-h", { code: "KeyH", mod: true, shift: true, alt: false }],
 	["mod-shift-u", { code: "KeyU", mod: true, shift: true, alt: false }],
-	["alt-h", { code: "KeyH", mod: false, shift: false, alt: true }],
 	["off", null],
 ];
 
