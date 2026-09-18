@@ -27,7 +27,7 @@
 			["sf-annotate-key", "annotateKey"], ["sf-click", "clickMoves"], ["sf-jump-key", "jumpKey"],
 			["sf-toggle-key", "toggleKey"]];
 		const checks = [["sf-behind", "behind"], ["sf-merge", "mergeDisplay"], ["sf-copy", "copyUnit"],
-			["sf-count", "countReading"]];
+			["sf-count", "countReading"], ["sf-resume", "resumeRuler"]];
 		const sliders = [["sf-opacity", "opacity"], ["sf-padding", "padding"], ["sf-margin", "scrollMargin"]];
 
 		for (const [id, key] of menus) {

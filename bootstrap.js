@@ -36,7 +36,8 @@ const DEFAULTS = {
 	jumpKey: "alt-j",            // alt-j | backslash | off
 	toggleKey: "alt-r",          // alt-r | off
 	countReading: true,          // keep a count of what has been read in a tab
-	resume: "",                  // where the ruler was when the plugin last stopped
+	resumeRuler: true,           // turn the ruler on again when a document comes back
+	resume: "",                  // where the ruler was left, per document
 };
 
 function pref(key) {
@@ -3369,6 +3370,7 @@ function paint(session, scroll, insist) {
 	session.painted.push(layer);
 
 	if (scroll) ensureVisible(v, pv, unit, insist);
+	noteSpot(session);
 }
 
 function drawHighlight(doc, svg, style, boxes, color, pageHeight) {
@@ -3785,14 +3787,24 @@ function startSession(reader, doc, btn) {
 	}
 
 	sessions.set(reader, session);
-	enqueue(session, () => focusPage(session, session.pageIndex, "visible"));
+	const spot = spotFor(reader);
+	enqueue(session, () => (spot && spot.kind === "pdf"
+		? restorePdfSpot(session, spot, true)
+		: focusPage(session, session.pageIndex, "visible")));
 	return session;
 }
 
-function stopSession(reader) {
+// `keepOn` says whether the ruler would still be running if it were up to the
+// user: a tab closing, Zotero quitting or the plugin updating leaves it on, so
+// it comes back with the document; the button and the key turn it off for good.
+function stopSession(reader, keepOn = true) {
 	const session = sessions.get(reader);
 	if (!session) return;
 	sessions.delete(reader);
+	try {
+		if (session.spotTimer && reader._iframeWindow) reader._iframeWindow.clearTimeout(session.spotTimer);
+	} catch (e) { /* its window went with the tab */ }
+	try { saveSpot(session, keepOn); } catch (e) { /* nothing worth keeping */ }
 	if (openMenuPanel && openMenuPanel.reader === reader) closeMenu();
 	if (annotatePanel && annotatePanel.reader === reader) closeAnnotate();
 	try { session.clear ? session.clear() : clearPaint(session); } catch (e) { /* its document is unloading */ }
@@ -3813,7 +3825,7 @@ function setButtonState(btn, on) {
 function toggle(reader, doc, btn) {
 	closeMenu();
 	sweepClosedReaders();
-	if (sessions.has(reader)) { stopSession(reader); return; }
+	if (sessions.has(reader)) { stopSession(reader, false); return; }
 	const session = startSession(reader, doc, btn);
 	setButtonState(btn, !!session);
 }
@@ -4183,6 +4195,7 @@ function paintDom(session, scroll, insist) {
 	let range;
 	try { range = rangeOf(dv.doc, unit); } catch (e) { return; }
 	if (scroll) revealDom(dv, range, insist);
+	noteSpot(session);
 	const registry = dv.win.CSS && dv.win.CSS.highlights;
 	if (!registry || typeof dv.win.Highlight !== "function") {
 		paintDomBoxes(session, dv, range);
@@ -4359,7 +4372,10 @@ function startDomSession(reader, doc, btn, dv) {
 	}
 	session.clear = () => clearDomPaint(session);
 	sessions.set(reader, session);
-	enqueue(session, () => focusDomVisible(session));
+	const spot = spotFor(reader);
+	enqueue(session, () => (spot && spot.kind === "dom"
+		? restoreDomSpot(session, spot, true)
+		: focusDomVisible(session)));
 	return session;
 }
 
@@ -5341,6 +5357,9 @@ function buildMenu(doc, reader) {
 		["off", "Does nothing", "The ruler is moved by the keys alone."],
 	]);
 
+	toggle("resumeRuler", "Comes back with the document",
+		"A document you were reading with the ruler on has it on again when you open it, on the sentence you left.");
+
 	heading("Turn the ruler on and off with");
 	chips("toggleKey", TOGGLE_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
 		? `Press ${keyLabel(spec)} instead of clicking the button.`
@@ -5517,70 +5536,219 @@ function refreshOpenToolbars() {
 	}
 }
 
-// Where the ruler was, per attachment, written when the plugin stops and read
-// back when its button is next built. That is the update case, and also the
-// one where Zotero is restarted and restores its tabs.
-const RESUME_LIMIT = 20;
+// Where the ruler was, per document. Kept in one preference, as a list of at
+// most SPOT_LIMIT places keyed by library and item key — the item's own key,
+// not its database id, which is local to this copy of the library.
+//
+// What is stored is an anchor rather than an index: the n-th sentence of a
+// page is not the same sentence after a step size changes or an update reads
+// the page differently, but the box it occupied, or the selector Zotero's own
+// annotations use, still points at it.
+const SPOT_LIMIT = 50;
+const SPOT_BYTES = 32 * 1024;
+const SPOT_TEXT = 80;
 
-function saveResume() {
-	const out = {};
-	let kept = 0;
-	for (const [reader, session] of sessions) {
-		if (kept >= RESUME_LIMIT) break;
-		const id = reader && reader.itemID;
-		if (id == null) continue;
-		out[id] = session.kind === "dom"
-			? { kind: "dom", section: session.section, unit: session.unitIndex }
-			: { kind: "pdf", page: session.pageIndex, unit: session.unitIndex };
-		kept++;
-	}
-	setPref("resume", kept ? JSON.stringify(out) : "");
-}
-
-// Read once: a ruler that has been put back is not put back again, and an
-// entry for a tab that is never opened again goes when the next stop rewrites
-// the list.
-function takeResume(reader) {
-	const id = reader && reader.itemID;
-	if (id == null) return null;
-	let saved;
+function spotKey(reader) {
 	try {
-		saved = JSON.parse(String(pref("resume")) || "{}");
-	} catch (e) {
-		saved = {};
-	}
-	const here = saved[id];
-	if (!here) return null;
-	delete saved[id];
-	setPref("resume", Object.keys(saved).length ? JSON.stringify(saved) : "");
-	return here;
+		const item = reader._item;
+		if (item && item.key) return `${item.libraryID || 1}/${item.key}`;
+	} catch (e) { /* an older reader shape */ }
+	const id = reader && reader.itemID;
+	return id == null ? null : String(id);
 }
 
-// Turn the ruler back on where it was. The view is left alone: the tab is
-// already showing what the reader was looking at, and scrolling it because a
-// plugin updated underneath would be the plugin taking over the page.
-function resumeSession(reader, doc, btn, where) {
-	const session = startSession(reader, doc, btn);
-	if (!session) return;
-	setButtonState(btn, true);
-	enqueue(session, async () => {
-		if (!live(session)) return;
-		if (session.kind === "dom") {
-			if (Number.isInteger(where.section)) session.section = where.section;
-			const units = domUnitsAt(session, session.section);
-			if (!units.length) return;
-			session.unitIndex = Math.min(Math.max(0, where.unit | 0), units.length - 1);
-			paintDom(session, false);
+function readSpots() {
+	try {
+		const all = JSON.parse(String(pref("resume") || "") || "{}");
+		return (all && typeof all === "object") ? all : {};
+	} catch (e) {
+		return {};                    // unreadable is the same as nothing read yet
+	}
+}
+
+// Newest first, capped by count and by size: a list of places to carry on from
+// is only worth what is still recent, and a preference is not a database.
+function writeSpots(all) {
+	const kept = {};
+	let size = 2;
+	for (const [key, spot] of Object.entries(all).sort((a, b) => (b[1].at || 0) - (a[1].at || 0))) {
+		if (Object.keys(kept).length >= SPOT_LIMIT) break;
+		const cost = JSON.stringify(key).length + JSON.stringify(spot).length + 2;
+		if (size + cost > SPOT_BYTES) break;
+		kept[key] = spot;
+		size += cost;
+	}
+	setPref("resume", Object.keys(kept).length ? JSON.stringify(kept) : "");
+}
+
+function spotOf(session) {
+	const unit = session.kind === "dom" ? currentDomUnit(session) : currentUnit(session);
+	if (!unit) return null;
+	const common = { text: String(unit.text || "").slice(0, SPOT_TEXT), g: granularity(), at: Date.now() };
+	if (session.kind !== "dom") {
+		return {
+			kind: "pdf",
+			page: session.pageIndex,
+			// Rounded, and only the first few: this is for finding the line
+			// again, not for drawing it.
+			rects: unit.rects.slice(0, 6).map((r) => r.map((n) => Math.round(n * 10) / 10)),
+			...common,
+		};
+	}
+	const dv = domViewOf(session.reader);
+	if (!dv) return null;
+	let selector = null;
+	try {
+		// The same selector an annotation would carry — a CFI in a book, a
+		// path and offsets in a saved page — so it survives a page turn, a
+		// change of font size, and everything else that moves the text.
+		const range = rangeOf(dv.doc, unit);
+		if (dv.view.toSelector) selector = JSON.parse(JSON.stringify(dv.view.toSelector(range)));
+	} catch (e) { /* the section moved under us; the text still anchors it */ }
+	return { kind: "dom", section: session.section, selector, ...common };
+}
+
+// `on` is whether the ruler should come back by itself: true when it was
+// running and something else stopped it — a tab closed, Zotero quit, the
+// plugin updated — and false when it was switched off deliberately.
+function saveSpot(session, on) {
+	const key = spotKey(session.reader);
+	if (!key) return;
+	const spot = spotOf(session);
+	if (!spot) return;
+	spot.on = !!on;
+	const all = readSpots();
+	all[key] = spot;
+	writeSpots(all);
+}
+
+function spotFor(reader) {
+	const key = spotKey(reader);
+	return (key && readSpots()[key]) || null;
+}
+
+// Saving on every step would write the preference file as fast as the key
+// repeats. Saving a couple of seconds after the last one costs nothing and
+// loses at most a sentence if Zotero is killed rather than quit.
+function noteSpot(session) {
+	let win = null;
+	try { win = session.reader._iframeWindow; } catch (e) { win = null; }
+	if (!win || !win.setTimeout) { saveSpot(session, true); return; }
+	if (session.spotTimer) { try { win.clearTimeout(session.spotTimer); } catch (e) { /* gone */ } }
+	session.spotTimer = win.setTimeout(() => {
+		session.spotTimer = 0;
+		if (live(session)) saveSpot(session, true);
+	}, 2000);
+}
+
+// How well a unit's boxes cover the ones that were saved. Rectangles are in
+// the page's own coordinates, so this survives zooming and rotation of the
+// view; a unit that has moved on the page scores nothing and the text decides.
+function boxOverlap(a, b) {
+	let total = 0;
+	for (const r of a) {
+		for (const q of b) {
+			const w = Math.min(r[2], q[2]) - Math.max(r[0], q[0]);
+			const h = Math.min(r[3], q[3]) - Math.max(r[1], q[1]);
+			if (w > 0 && h > 0) total += w * h;
+		}
+	}
+	return total;
+}
+
+function bestUnit(units, spot) {
+	let best = -1, score = 0;
+	if (spot && spot.rects && spot.rects.length) {
+		for (let i = 0; i < units.length; i++) {
+			const overlap = boxOverlap(units[i].rects, spot.rects);
+			if (overlap > score) { score = overlap; best = i; }
+		}
+	}
+	if (best >= 0) return best;
+	const text = String((spot && spot.text) || "").trim().slice(0, 30);
+	if (text) {
+		const found = units.findIndex((u) => u.text.startsWith(text));
+		if (found >= 0) return found;
+	}
+	// Nothing matched — the document changed, or it is being read a different
+	// way. The top of the saved box is still roughly where the eye was.
+	if (spot && spot.rects && spot.rects.length) {
+		const top = Math.max(...spot.rects.map((r) => r[3]));
+		let near = 0, gap = Infinity;
+		for (let i = 0; i < units.length; i++) {
+			const d = Math.abs(units[i].top - top);
+			if (d < gap) { gap = d; near = i; }
+		}
+		return near;
+	}
+	return 0;
+}
+
+// Put the ruler back where the document was left. `scroll` is false for an
+// update, where the tab is already showing what was being read and moving it
+// would be the plugin taking over the page, and true for a document being
+// opened, where the view lands wherever Zotero last left it.
+async function restorePdfSpot(session, spot, scroll) {
+	const page = Math.max(0, spot.page | 0);
+	const units = await unitsAt(session, page);
+	if (!live(session)) return;
+	if (!units.length) { await focusPage(session, session.pageIndex, "visible"); return; }
+	session.pageIndex = page;
+	session.unitIndex = bestUnit(units, spot);
+	paint(session, !!scroll);
+	prefetch(session);
+}
+
+function restoreDomSpot(session, spot, scroll) {
+	const dv = domViewOf(session.reader);
+	if (!dv) return;
+	if (Number.isInteger(spot.section)) session.section = spot.section;
+	const units = domUnitsAt(session, session.section);
+	if (!units.length) { focusDomVisible(session); return; }
+	let index = -1;
+	let range = null;
+	try {
+		if (spot.selector && dv.view.toDisplayedRange) {
+			range = dv.view.toDisplayedRange(cloneForReader(session.reader, spot.selector));
+		}
+	} catch (e) { /* the selector points at text this book no longer has */ }
+	if (range) {
+		for (let i = 0; i < units.length; i++) {
+			try {
+				if (rangeOf(dv.doc, units[i]).comparePoint(range.startContainer, range.startOffset) === 0) {
+					index = i;
+					break;
+				}
+			} catch (e) { /* a node that has gone */ }
+		}
+	}
+	if (index < 0) {
+		const text = String(spot.text || "").trim().slice(0, 30);
+		if (text) index = units.findIndex((u) => u.text.startsWith(text));
+	}
+	if (index < 0) { focusDomVisible(session); return; }
+	session.unitIndex = index;
+	paintDom(session, !!scroll);
+}
+
+// A document that was being read with the ruler on gets it back when it is
+// opened again — unless that has been turned off, in which case the place is
+// still remembered and turning the ruler on goes there.
+function autoStart(reader, doc, btn) {
+	const win = doc.defaultView;
+	let tries = 0;
+	const attempt = () => {
+		if (stopped || sessions.has(reader) || !btn.isConnected) return;
+		// The toolbar is built before the document in it is loaded, so this
+		// waits for a view rather than asking for one that is not there yet.
+		if (viewerOf(reader) || domViewOf(reader)) {
+			const session = startSession(reader, doc, btn);
+			setButtonState(btn, !!session);
 			return;
 		}
-		const page = Math.max(0, where.page | 0);
-		const units = await unitsAt(session, page);
-		if (!live(session) || !units.length) return;
-		session.pageIndex = page;
-		session.unitIndex = Math.min(Math.max(0, where.unit | 0), units.length - 1);
-		paint(session, false);
-		prefetch(session);
-	});
+		if (++tries < 30 && win && win.setTimeout) win.setTimeout(attempt, 500);
+	};
+	attempt();
 }
 
 // --- plugin entry points ---------------------------------------------------
@@ -5631,8 +5799,7 @@ function renderButton(event) {
 	const existing = sessions.get(reader);
 	if (existing) existing.btn = btn;      // the old toolbar went away with its tab
 	setButtonState(btn, !!existing);
-	// Where the ruler was when the plugin last stopped, if this is that tab.
-	const where = existing ? null : takeResume(reader);
+	const spot = existing ? null : spotFor(reader);
 	btn.addEventListener("click", (e) => {
 		// Modifier-click opens the settings too: right-click is awkward on a
 		// trackpad, and this is the button people will already be aiming at.
@@ -5649,7 +5816,7 @@ function renderButton(event) {
 	if (typeof WeakRef === "function") buttons.add(new WeakRef(btn));
 	append(btn);
 	watchToggleKey(reader, doc);
-	if (where) resumeSession(reader, doc, btn, where);
+	if (spot && spot.on && pref("resumeRuler")) autoStart(reader, doc, btn);
 }
 
 // What each preference costs to change. Style and colour are read on every
@@ -5664,7 +5831,8 @@ const PREF_EFFECT = {
 	mergeDisplay: "reanalyse",
 	autoScroll: "none", scrollMargin: "none", clickMoves: "none",
 	annotateKey: "none", annotateColor: "none", annotateType: "none", copyUnit: "none",
-	jumpKey: "none", toggleKey: "none", countReading: "none", resume: "none",
+	jumpKey: "none", toggleKey: "none", countReading: "none",
+	resumeRuler: "none", resume: "none",
 };
 
 function applyPrefEffect(effect) {
@@ -5734,8 +5902,7 @@ function shutdown() {
 	stopped = true;
 	closeMenu();
 	closeAnnotate();
-	saveResume();
-	for (const reader of [...sessions.keys()]) stopSession(reader);
+	for (const reader of [...sessions.keys()]) stopSession(reader, true);
 	for (const ref of buttons) {
 		const el = ref.deref();
 		if (el) try { el.remove(); } catch (e) { /* tab gone */ }
@@ -5778,6 +5945,7 @@ if (typeof module !== "undefined") {
 		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
 		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
 		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
-		sessions, saveResume, takeResume, RESUME_LIMIT,
+		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit,
+		SPOT_LIMIT, SPOT_BYTES,
 	};
 }

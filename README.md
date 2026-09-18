@@ -38,9 +38,15 @@ read in the tab, and can put the count back to zero.
 Zotero 7 or later. In Zotero 7 the highlight in books and web pages is drawn as
 boxes rather than as coloured text; everything else is the same.
 
-Updating the plugin does not need the open tabs to be closed and opened again:
-the button goes straight back into the toolbars that are already there, and
-each ruler comes back on the sentence it was left on.
+The ruler remembers where you were. Close the tab, quit Zotero, update the
+plugin — open that document again and the ruler is back on the sentence you
+left it on. The last 50 documents are remembered; a document you switched the
+ruler off in keeps its place but stays off until you ask for it, and the whole
+behaviour can be turned off in the settings.
+
+Updating the plugin does not need the open tabs to be closed and opened again
+either: the button goes straight back into the toolbars that are already
+there.
 
 ## What makes it different
 

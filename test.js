@@ -30,7 +30,7 @@ const {
 	blockText, collectBlocks, blockUnits,
 	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
-	sessions, saveResume, takeResume, RESUME_LIMIT,
+	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -1784,8 +1784,9 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	delete global.Zotero;
 }
 
-// Updating the plugin stops it while the tabs stay open, so where each ruler
-// was is written down and read back once, per attachment.
+// Where each document was left is kept in one preference: keyed by the item's
+// own key, capped by count and by size, and anchored to the text rather than
+// to a position in a list.
 {
 	const prefs = {};
 	global.Zotero = {
@@ -1793,33 +1794,55 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 		Prefs: { get: (key) => prefs[key], set: (key, v) => { prefs[key] = v; }, clear: (key) => { delete prefs[key]; } },
 	};
 	const KEY = "extensions.zotero.sentenceFocus.resume";
-	const paper = { itemID: 7 }, book = { itemID: 9 }, unread = { itemID: 11 };
-	sessions.set(paper, { kind: "pdf", pageIndex: 12, unitIndex: 4 });
-	sessions.set(book, { kind: "dom", section: 3, unitIndex: 21 });
-	saveResume();
-	assert.deepStrictEqual(JSON.parse(prefs[KEY]), {
-		7: { kind: "pdf", page: 12, unit: 4 },
-		9: { kind: "dom", section: 3, unit: 21 },
-	});
 
-	assert.strictEqual(takeResume(unread), null, "a tab that was not open resumes nothing");
-	assert.deepStrictEqual(takeResume(paper), { kind: "pdf", page: 12, unit: 4 });
-	assert.strictEqual(takeResume(paper), null, "and is put back only once");
-	assert.deepStrictEqual(takeResume(book), { kind: "dom", section: 3, unit: 21 });
-	assert.strictEqual(prefs[KEY], "", "nothing left to resume is nothing stored");
+	// The item key, not the local database id, which another copy of the
+	// library numbers differently.
+	assert.strictEqual(spotKey({ itemID: 7, _item: { libraryID: 1, key: "ABCD1234" } }), "1/ABCD1234");
+	assert.strictEqual(spotKey({ itemID: 7 }), "7", "an older reader still gets a key");
+	assert.strictEqual(spotKey({}), null);
 
-	// Whatever is on screen is worth keeping; a library's worth of old tabs is not.
-	sessions.clear();
-	for (let i = 0; i < RESUME_LIMIT + 5; i++) sessions.set({ itemID: 100 + i }, { kind: "pdf", pageIndex: i, unitIndex: 0 });
-	saveResume();
-	assert.strictEqual(Object.keys(JSON.parse(prefs[KEY])).length, RESUME_LIMIT, "the list is capped");
+	// Fifty documents, and the fifty-first pushes out the one read longest ago.
+	const many = {};
+	for (let i = 0; i < SPOT_LIMIT + 5; i++) many[`1/ITEM${i}`] = { kind: "pdf", page: i, at: 1000 + i };
+	writeSpots(many);
+	const kept = readSpots();
+	assert.strictEqual(Object.keys(kept).length, SPOT_LIMIT);
+	assert.ok(!kept["1/ITEM0"], "the oldest is dropped");
+	assert.ok(kept[`1/ITEM${SPOT_LIMIT + 4}`], "the newest is kept");
 
-	// Rubbish in the pref is not a reason to fail to start.
+	// And a few very long entries cannot push the preference past its ceiling.
+	const fat = {};
+	for (let i = 0; i < 40; i++) fat[`1/FAT${i}`] = { kind: "dom", selector: { value: "x".repeat(2000) }, at: 1000 + i };
+	writeSpots(fat);
+	assert.ok(prefs[KEY].length <= SPOT_BYTES, `kept under the ceiling: ${prefs[KEY].length}`);
+	assert.ok(Object.keys(readSpots()).length < 40, "by keeping fewer of them");
+
+	// Unreadable is the same as nothing: a bad value must not stop the plugin.
 	prefs[KEY] = "{not json";
-	assert.strictEqual(takeResume(paper), null);
+	assert.deepStrictEqual(readSpots(), {});
+	assert.strictEqual(spotFor({ itemID: 7 }), null);
 
-	sessions.clear();
 	delete global.Zotero;
+}
+
+// The saved place is found again by the boxes it covered, then by its text,
+// and failing both by where it was on the page — never by its position in the
+// list, which a change of step size or a re-read of the page would move.
+{
+	const unit = (top, text, rects) => ({ text, top, rects });
+	const units = [
+		unit(700, "The first sentence.", [[70, 690, 300, 700]]),
+		unit(680, "The second sentence.", [[70, 670, 300, 680]]),
+		unit(660, "The third sentence.", [[70, 650, 300, 660]]),
+	];
+	assert.strictEqual(bestUnit(units, { rects: [[72, 671, 290, 679]], text: "moved" }), 1, "the boxes win");
+	assert.strictEqual(bestUnit(units, { rects: [[70, 100, 300, 110]], text: "The third sentence." }), 2,
+		"and the text decides when the page has been re-set");
+	assert.strictEqual(bestUnit(units, { rects: [[70, 655, 300, 662]], text: "gone entirely" }), 2,
+		"a box that only touches one still finds it");
+	assert.strictEqual(bestUnit(units, { rects: [], text: "" }), 0, "nothing to go on: the top of the page");
+	// A box on a page whose text has changed beyond recognition lands nearby.
+	assert.strictEqual(bestUnit(units, { rects: [[400, 658, 500, 662]], text: "nothing like it" }), 2);
 }
 
 // --- a table whose cells wrap ------------------------------------------------
