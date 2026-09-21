@@ -4998,7 +4998,10 @@ function openAnnotate(session) {
 		dot.setAttribute("role", "radio");
 		dot.title = `${name} (${i + 1})`;
 		dot.setAttribute("aria-label", name);
-		dot.addEventListener("click", () => { pickColor(hex, false); apply(false); });
+		// Choosing is not deciding, with the mouse as with the keyboard: the
+		// colour is picked here and the panel waits to be told what to do with
+		// it, which is what leaves room for a note.
+		dot.addEventListener("click", () => pickColor(hex, true));
 		dots.append(dot);
 	});
 	showColor();
@@ -5074,7 +5077,8 @@ function openAnnotate(session) {
 		// A panel that says why it can do nothing answers to nothing else.
 		if (blocked) { if (key === "Enter") { stop(); closeAnnotate(); } return; }
 		if (key === "Enter" || key === " ") {
-			// Space and Enter on a button are that button's own business.
+			// Space and Enter on one of the two buttons are that button's own
+			// business; on a colour they mean "this one, then".
 			if (e.target && e.target.tagName === "BUTTON" && e.target.className !== "sfz-dot") return;
 			stop(); apply(false); return;
 		}
