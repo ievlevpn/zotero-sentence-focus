@@ -17,9 +17,9 @@ ruler — or whatever you have selected — becomes a Zotero highlight or underl
 
 ![The annotating panel over a sentence](docs/screenshot-annotate.png)
 
-The panel is made for the keyboard: `1`–`8` pick a colour and mark it, `h` and
-`u` choose highlight or underline, `Enter` marks it in the last colour you used,
-and `n` marks it and opens Zotero's own popup for a comment and tags.
+The panel is made for the keyboard: `1`–`8` pick a colour, `h` and `u` choose
+highlight or underline, `Enter` marks it, and `n` marks it and opens Zotero's
+own popup for a comment and tags.
 
 ## Install
 

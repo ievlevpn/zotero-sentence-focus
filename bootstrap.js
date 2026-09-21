@@ -4911,11 +4911,23 @@ const ANNOTATE_CSS = `
 
 let annotatePanel = null;   // { el, reader, cleanup } of the single open popup
 
+// The reader only acts on its own keys when they arrive from the view — that
+// is how it tells a key meant for the page from one meant for the sidebar. A
+// panel that closes leaving the focus on the reader's chrome therefore takes
+// Zotero's keys with it, Cmd-Z among them, until the page is clicked. So the
+// focus goes back to the view, which is what Zotero's own popups do too.
 function closeAnnotate() {
 	if (!annotatePanel) return;
 	const panel = annotatePanel;
 	annotatePanel = null;   // null first: a torn-down document makes cleanup throw
 	try { panel.cleanup(); panel.el.remove(); } catch (e) { /* already gone */ }
+	try { focusView(panel.reader); } catch (e) { /* the tab went with it */ }
+}
+
+function focusView(reader) {
+	const inner = reader && reader._internalReader;
+	const view = inner && (inner._lastView || inner._primaryView);
+	if (view && typeof view.focus === "function") view.focus();
 }
 
 const annotateOpenFor = (session) => !!annotatePanel && annotatePanel.reader === session.reader;
@@ -5069,12 +5081,12 @@ function openAnnotate(session) {
 		if (key === "n" || key === "N") { stop(); apply(true); return; }
 		if (key === "h" || key === "H") { stop(); state.type = "highlight"; showType(); return; }
 		if (key === "u" || key === "U") { stop(); state.type = "underline"; showType(); return; }
-		// A digit is a colour and a decision at once, as clicking one is: the
-		// arrows are there for picking a colour without committing to it.
+		// A digit chooses a colour and waits: what is wanted next may be a
+		// note, and closing here would take that away for the sake of one
+		// keystroke.
 		if (key >= "1" && key <= "8") {
 			stop();
-			pickColor(ANNOTATION_COLORS[Number(key) - 1][0], false);
-			apply(false);
+			pickColor(ANNOTATION_COLORS[Number(key) - 1][0], true);
 			return;
 		}
 		if (key === "ArrowRight" || key === "ArrowDown") {
