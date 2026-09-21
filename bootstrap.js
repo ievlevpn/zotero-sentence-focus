@@ -3156,6 +3156,7 @@ const CSS = `
 .sfz-layer{display:contents}
 .sfz-veil{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:3}
 .sfz-veil.sfz-blend{mix-blend-mode:var(--sfz-blend)}
+.sfz-dim-strip{position:fixed;background:#000;pointer-events:none;z-index:2147483646}
 `;
 
 // A highlighter darkens paper and lightens ink, so the blend has to follow the
@@ -3238,10 +3239,73 @@ function toPercent(rect, vp) {
 }
 
 function clearPaint(session) {
+	if (session.dim) {
+		try { session.dim(); } catch (e) { /* its window went with the tab */ }
+		session.dim = null;
+	}
 	for (const el of session.painted) {
 		try { el.remove(); } catch (e) { /* page already torn down */ }
 	}
 	session.painted = [];
+}
+
+// Dimming is a veil over the view, not a mark on a page. The sheet inside the
+// page has the sentence cut out of it, but it stops where the page does, and a
+// veil that leaves the next page at full brightness is not hiding anything. So
+// everything around that page — the pages above and below, and the margins
+// beside them — is covered by four strips fixed to the window, which follow it
+// as it is scrolled.
+function dimAround(session, v, pv, alpha) {
+	const doc = v.doc, win = v.win;
+	const strips = [];
+	for (let i = 0; i < 4; i++) {
+		const el = doc.createElement("div");
+		el.className = "sfz-dim-strip";
+		el.style.opacity = String(alpha);
+		doc.body.append(el);
+		strips.push(el);
+	}
+	const place = () => {
+		const page = pv.div.getBoundingClientRect();
+		const W = win.innerWidth || 0, H = win.innerHeight || 0;
+		// Scrolled away from the ruler altogether: there is nothing on screen
+		// for the veil to be pointing at, and covering a page being looked at
+		// deliberately only makes it unreadable. It comes back on the way back.
+		const away = page.bottom <= 0 || page.top >= H;
+		for (const el of strips) el.style.display = away ? "none" : "";
+		if (away) return;
+		const top = Math.max(0, Math.min(H, page.top));
+		const bottom = Math.max(0, Math.min(H, page.bottom));
+		const set = (el, x, y, w, h) => {
+			el.style.left = `${x}px`;
+			el.style.top = `${y}px`;
+			el.style.width = `${Math.max(0, w)}px`;
+			el.style.height = `${Math.max(0, h)}px`;
+		};
+		set(strips[0], 0, 0, W, top);
+		set(strips[1], 0, bottom, W, H - bottom);
+		set(strips[2], 0, top, page.left, bottom - top);
+		set(strips[3], page.right, top, W - page.right, bottom - top);
+	};
+	place();
+	// The page moves under the window on every scroll; measuring once a frame
+	// is enough to keep the strips on it without doing it on every event.
+	let queued = false;
+	const follow = () => {
+		if (queued) return;
+		queued = true;
+		win.requestAnimationFrame(() => { queued = false; place(); });
+	};
+	const container = doc.getElementById("viewerContainer");
+	if (container) container.addEventListener("scroll", follow, { passive: true });
+	win.addEventListener("resize", follow);
+	session.dim = () => {
+		if (container) container.removeEventListener("scroll", follow);
+		win.removeEventListener("resize", follow);
+		for (const el of strips) {
+			try { el.remove(); } catch (e) { /* the document went first */ }
+		}
+	};
 }
 
 // The step size the user is reading at. Read from the pref each time so a
@@ -3266,7 +3330,7 @@ const STYLES = [
 	["soft", "Soft", "Feathered edges that fade out instead of stopping."],
 	["marker", "Marker", "A chisel-tip stroke: slanted ends and a soft edge."],
 	["underline", "Underline", "A rule under each line; nothing covers the text."],
-	["dim", "Dim rest", "Veils the rest of the page instead of marking the unit."],
+	["dim", "Dim rest", "Veils everything else in the view instead of marking the unit."],
 ];
 const STYLE_NAMES = new Set(STYLES.map(([value]) => value));
 
@@ -3368,6 +3432,7 @@ function paint(session, scroll, insist) {
 	layer.append(svg);
 	pv.div.append(layer);
 	session.painted.push(layer);
+	if (style === "dim") dimAround(session, v, pv, alpha);
 
 	if (scroll) ensureVisible(v, pv, unit, insist);
 	noteSpot(session);
