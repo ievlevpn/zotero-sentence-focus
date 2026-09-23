@@ -4309,9 +4309,30 @@ function revealDom(dv, range, insist) {
 	}
 }
 
+// In a paginated book a sentence can start at the foot of one page and end at
+// the top of the next. Stepping on from it would turn the page and move on in
+// the same keypress, and the rest of it would never be read under the ruler.
+function continuesOverPage(dv, unit) {
+	const flow = dv.view.flow;
+	if (!unit || !flow || typeof flow.navigateToNextPage !== "function"
+		|| !dv.doc.body.classList.contains("flow-mode-paginated")) return false;
+	let rects;
+	try { rects = Array.from(rangeOf(dv.doc, unit).getClientRects()).filter((r) => r.width || r.height); } catch (e) { return false; }
+	if (!rects.length) return false;
+	const vertical = !!flow._isVertical;
+	const extent = vertical ? dv.win.innerHeight : dv.win.innerWidth;
+	const shown = (r) => vertical ? r.top < extent && r.bottom > 0 : r.left < extent && r.right > 0;
+	const beyond = (r) => (vertical ? r.top : r.left) >= extent;
+	return rects.some(shown) && rects.some(beyond);
+}
+
 async function moveDom(session, delta) {
 	const dv = domViewOf(session.reader);
 	if (!dv) return false;
+	if (delta > 0 && continuesOverPage(dv, currentDomUnit(session))) {
+		dv.view.flow.navigateToNextPage();
+		return false;   // the same sentence, not another one read
+	}
 	const total = sectionRoots(dv).length;
 	let section = session.section;
 	let units = domUnitsAt(session, section);
