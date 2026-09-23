@@ -3359,8 +3359,40 @@ function granularity() {
 }
 
 function currentUnit(session) {
-	const units = cacheOf(session).get(cacheKey(session.pageIndex));
-	return units && units[session.unitIndex];
+	return spanned(cacheOf(session).get(cacheKey(session.pageIndex)), session, session.pageIndex);
+}
+
+// The annotating panel can grow the ruler over several units, as Zotero's
+// read-aloud popup grows a highlight: `session.span` holds the first and last
+// of them, around the one the ruler was on. While it lasts the ruler's unit is
+// the whole run, so the paint and the annotation both follow it. A span stays
+// on its own page or section: an annotation cannot cross one.
+function spanned(units, session, where) {
+	const unit = units && units[session.unitIndex];
+	const span = session.span;
+	if (!unit || !span || span.where !== where || span.end <= span.start
+		|| session.unitIndex < span.start || session.unitIndex > span.end) return unit;
+	const part = units.slice(span.start, span.end + 1);
+	const first = part[0], last = part[part.length - 1];
+	if (!first || !last) return unit;
+	const text = part.map((u) => u.text).join(" ");
+	return session.kind === "dom"
+		? { ...first, text, endNode: last.endNode, endOffset: last.endOffset }
+		: { ...first, text, rects: part.flatMap((u) => u.rects) };
+}
+
+// Zotero's rule for ⌘← and ⌘→: grow away from where it started, and going the
+// other way first takes back what was added on that side.
+function growSpan(span, direction, count) {
+	let { base, start, end } = span;
+	if (direction < 0) {
+		if (end > base) end--;
+		else if (start > 0) start--;
+		else return null;
+	} else if (start < base) start++;
+	else if (end < count - 1) end++;
+	else return null;
+	return { ...span, base, start, end };
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -4278,7 +4310,7 @@ function clearDomPaint(session, dv = domViewOf(session.reader)) {
 	} catch (e) { /* document gone */ }
 }
 
-const currentDomUnit = (session) => (session.units.get(`${session.section}:${granularity()}`) || [])[session.unitIndex];
+const currentDomUnit = (session) => spanned(session.units.get(`${session.section}:${granularity()}`), session, session.section);
 
 // Put the ruler back on the unit it was on, in whatever the units are now:
 // the one holding where it started, or the first one after it.
@@ -4296,8 +4328,7 @@ function reanchorDom(session, was) {
 function paintDom(session, scroll, insist) {
 	const dv = domViewOf(session.reader);
 	if (!dv) { stopSession(session.reader); return; }
-	const units = domUnitsAt(session, session.section);
-	const unit = units[session.unitIndex];
+	const unit = spanned(domUnitsAt(session, session.section), session, session.section);
 	clearDomPaint(session, dv);
 	if (!unit) return;
 	let range;
@@ -4805,18 +4836,20 @@ function rangeClientRect(win, range) {
 // What the annotation will be made from: whatever the user has selected, and
 // failing that the unit the ruler is on. Both are resolved now rather than
 // when the popup is answered — a selection can be lost to a stray click while
-// the popup is open, and the ruler can be stepped from the sidebar.
-function annotationTarget(session) {
-	return session.kind === "dom" ? domAnnotationTarget(session) : pdfAnnotationTarget(session);
+// the popup is open, and the ruler can be stepped from the sidebar. Once the
+// panel has moved the ruler, `unitOnly` says the selection has been left
+// behind.
+function annotationTarget(session, unitOnly) {
+	return session.kind === "dom" ? domAnnotationTarget(session, unitOnly) : pdfAnnotationTarget(session, unitOnly);
 }
 
-function pdfAnnotationTarget(session) {
+function pdfAnnotationTarget(session, unitOnly) {
 	const v = viewerOf(session.reader);
 	const view = session.reader._internalReader && session.reader._internalReader._primaryView;
 	if (!v || !view) return null;
 
 	const ranges = view._selectionRanges;
-	if (ranges && ranges.length && !ranges[0].collapsed) {
+	if (!unitOnly && ranges && ranges.length && !ranges[0].collapsed) {
 		// The reader keeps the text of its own selection: the text layer reads
 		// differently, because it is glyph boxes rather than the page's words.
 		let text = ranges.map((r) => r.text || "").join(" ").trim();
@@ -4886,11 +4919,11 @@ function cloneForReader(reader, obj) {
 	try { return Cu.cloneInto(obj, reader._iframeWindow); } catch (e) { return obj; }
 }
 
-function domAnnotationTarget(session) {
+function domAnnotationTarget(session, unitOnly) {
 	const dv = domViewOf(session.reader);
 	if (!dv) return null;
 	let range = null, from = "unit", text = "";
-	try {
+	if (!unitOnly) try {
 		const sel = dv.win.getSelection();
 		if (sel && sel.rangeCount && !sel.isCollapsed) {
 			range = sel.getRangeAt(0).cloneRange();
@@ -5059,6 +5092,32 @@ function focusView(reader) {
 	if (view && typeof view.focus === "function") view.focus();
 }
 
+// Zotero reads ⌘[ and ⌘] (Ctrl on Linux) as back and forward, from a listener
+// that runs before any of ours and pays no attention to a key being taken. It
+// asks the reader for navigateBack and navigateForward as the key comes, so
+// while the panel is open those are stood in for by nothing, and put back when
+// it closes.
+function holdNavigation(reader) {
+	let inner;
+	try { inner = Cu.waiveXrays(reader._internalReader); } catch (e) { return () => {}; }
+	const held = [];
+	for (const name of ["navigateBack", "navigateForward"]) {
+		try {
+			if (!inner || typeof inner[name] !== "function") continue;
+			const own = Object.prototype.hasOwnProperty.call(inner, name);
+			held.push([name, own, inner[name]]);
+			inner[name] = Cu.exportFunction(() => {}, reader._iframeWindow);
+		} catch (e) {
+			Zotero.debug("Sentence Focus: could not hold " + name + " - " + e);
+		}
+	}
+	return () => {
+		for (const [name, own, was] of held) {
+			try { if (own) inner[name] = was; else delete inner[name]; } catch (e) { /* the tab went */ }
+		}
+	};
+}
+
 const annotateOpenFor = (session) => !!annotatePanel && annotatePanel.reader === session.reader;
 
 function toggleAnnotate(session) {
@@ -5075,7 +5134,7 @@ function openAnnotate(session) {
 	closeMenu();
 	const doc = readerDoc(session);
 	if (!doc) return;
-	const target = annotationTarget(session);
+	let target = annotationTarget(session);
 	injectStyle(doc, "sfz-annotate-style", ANNOTATE_CSS);
 
 	const make = (tag, cls, text) => {
@@ -5089,10 +5148,11 @@ function openAnnotate(session) {
 	panel.setAttribute("role", "dialog");
 	panel.setAttribute("aria-label", "Annotate");
 
-	const state = { color: annotateColor(), type: annotateType() };
+	const state = { color: annotateColor(), type: annotateType(), made: false };
 	const title = make("div", "sfz-pop-title");
 	const heading = make("strong", null, "Annotate");
-	title.append(heading, make("span", null, target ? (target.from === "selection" ? "selection" : granularity()) : ""));
+	const what = make("span");
+	title.append(heading, what);
 	panel.append(title);
 
 	// Nothing to mark, or nothing that may be marked: say so and stop there
@@ -5100,7 +5160,17 @@ function openAnnotate(session) {
 	const blocked = !target ? "Nothing to annotate: select some text, or put the ruler on a sentence."
 		: isReadOnly(session.reader) ? "This file is read-only, so it cannot be annotated." : "";
 	if (blocked) panel.append(make("p", "sfz-pop-note", blocked));
-	if (target && target.text) panel.append(make("p", "sfz-pop-quote", `“${target.text.replace(/\s+/g, " ").slice(0, 160)}”`));
+	const quote = make("p", "sfz-pop-quote");
+	panel.append(quote);
+	const showTarget = () => {
+		const span = session.span;
+		const n = span ? span.end - span.start + 1 : 1;
+		what.textContent = !target ? "" : target.from === "selection" ? "selection"
+			: n > 1 ? `${n} ${granularity()}s` : granularity();
+		quote.textContent = target && target.text ? `“${target.text.replace(/\s+/g, " ").slice(0, 160)}”` : "";
+		quote.hidden = !quote.textContent;
+	};
+	showTarget();
 
 	const dots = make("div", "sfz-dots");
 	dots.setAttribute("role", "radiogroup");
@@ -5163,6 +5233,7 @@ function openAnnotate(session) {
 			Zotero.debug("Sentence Focus: annotation failed - " + ((e && e.stack) || e));
 		}
 		if (saved) {
+			state.made = true;
 			setPref("annotateColor", state.color);
 			setPref("annotateType", state.type);
 			closeAnnotate();
@@ -5190,13 +5261,49 @@ function openAnnotate(session) {
 		make("kbd", null, "h"), doc.createTextNode("/"), make("kbd", null, "u"),
 		doc.createTextNode(" kind · "),
 		make("kbd", null, "↵"), doc.createTextNode(" mark · "),
-		make("kbd", null, "n"), doc.createTextNode(" note"),
+		make("kbd", null, "n"), doc.createTextNode(" note · "),
+		make("kbd", null, "["), doc.createTextNode(" "), make("kbd", null, "]"), doc.createTextNode(" move · "),
+		make("kbd", null, onMac() ? "⌘[" : "Ctrl+["), doc.createTextNode(" "), make("kbd", null, onMac() ? "⌘]" : "Ctrl+]"),
+		doc.createTextNode(" extend"),
 	);
 	panel.append(hint);
 	showType();
 
 	doc.body.append(panel);
 	placeAnnotate(doc, panel, target && target.rect);
+
+	// `[` and `]` move what is to be marked a unit at a time, and with ⌘ (Ctrl)
+	// grow or shrink it — the keys Zotero's read-aloud popup gives the arrows,
+	// which here already choose the colour. The selection, if that is what
+	// the panel opened on, is left behind: the ruler is what moves.
+	const retarget = () => {
+		const next = annotationTarget(session, true);
+		if (!next) return;
+		target = next;
+		showTarget();
+		placeAnnotate(doc, panel, target.rect);
+	};
+	const repaint = () => (session.kind === "dom" ? paintDom(session, false) : paint(session, false));
+	const stepTarget = (delta) => enqueue(session, async () => {
+		session.span = null;
+		await (session.kind === "dom" ? moveDom : move)(session, delta);
+		if (annotatePanel && annotatePanel.el === panel) retarget();
+	});
+	const growTarget = (delta) => enqueue(session, () => {
+		const where = session.kind === "dom" ? session.section : session.pageIndex;
+		const units = session.kind === "dom" ? session.units.get(`${session.section}:${granularity()}`)
+			: cacheOf(session).get(cacheKey(session.pageIndex));
+		if (!units || !units[session.unitIndex]) return;
+		const at = session.unitIndex;
+		const span = session.span && session.span.where === where ? session.span : { where, base: at, start: at, end: at };
+		const grown = growSpan(span, delta, units.length);
+		if (!grown) return;
+		session.span = grown;
+		repaint();
+		retarget();
+	});
+	const bracket = (e) => (e.code === "BracketRight" || e.key === "]") ? 1
+		: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
 
 	const onPanelKey = (e) => {
 		const key = e.key;
@@ -5205,6 +5312,15 @@ function openAnnotate(session) {
 		if (key === "Escape") { stop(); closeAnnotate(); return; }
 		// A panel that says why it can do nothing answers to nothing else.
 		if (blocked) { if (key === "Enter") { stop(); closeAnnotate(); } return; }
+		const delta = bracket(e);
+		if (delta && !e.altKey && !e.shiftKey) {
+			const mac = onMac();
+			const mod = mac ? e.metaKey : e.ctrlKey, other = mac ? e.ctrlKey : e.metaKey;
+			if (other) return;
+			stop();
+			if (mod) growTarget(delta); else stepTarget(delta);
+			return;
+		}
 		if (key === "Enter" || key === " ") {
 			// Space and Enter on one of the two buttons are that button's own
 			// business; on a colour they mean "this one, then".
@@ -5242,6 +5358,7 @@ function openAnnotate(session) {
 		d.addEventListener("pointerdown", onDown, true);
 		d.addEventListener("keydown", onKey, true);
 	}
+	const releaseNavigation = blocked ? () => {} : holdNavigation(session.reader);
 	annotatePanel = {
 		el: panel,
 		reader: session.reader,
@@ -5249,6 +5366,18 @@ function openAnnotate(session) {
 			for (const d of docs) {
 				d.removeEventListener("pointerdown", onDown, true);
 				d.removeEventListener("keydown", onKey, true);
+			}
+			releaseNavigation();
+			// A grown span ends with the panel. Marked, the ruler goes on from
+			// its last unit, as reading would; let go, it goes back to where
+			// it was.
+			const span = session.span;
+			if (span) {
+				session.span = null;
+				if (span.where === (session.kind === "dom" ? session.section : session.pageIndex)) {
+					session.unitIndex = state.made ? span.end : span.base;
+				}
+				try { repaint(); } catch (e) { /* the tab is closing */ }
 			}
 		},
 	};
@@ -6090,6 +6219,7 @@ if (typeof module !== "undefined") {
 		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
 		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
 		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
+		growSpan, spanned,
 		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit,
 		SPOT_LIMIT, SPOT_BYTES,
 	};

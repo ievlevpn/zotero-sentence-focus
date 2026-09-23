@@ -19,7 +19,10 @@ ruler — or whatever you have selected — becomes a Zotero highlight or underl
 
 The panel is made for the keyboard: `1`–`8` pick a colour, `h` and `u` choose
 highlight or underline, `Enter` marks it, and `n` marks it and opens Zotero's
-own popup for a comment and tags.
+own popup for a comment and tags. `[` and `]` move what is to be marked to the
+previous or next sentence, and `⌘[` / `⌘]` (`Ctrl` elsewhere) stretch it over
+one more sentence back or forward — the same moves Zotero's read-aloud popup
+makes with the arrows.
 
 ## Install
 

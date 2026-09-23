@@ -31,6 +31,7 @@ const {
 	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
+	growSpan, spanned,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -3165,6 +3166,38 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.deepStrictEqual(split("Это сделал император Василий I. Наступление продолжалось."),
 		["Это сделал император Василий I.", "Наступление продолжалось."]);
 	assert.deepStrictEqual(split("Об этом писал А. С. Пушкин в письме."), ["Об этом писал А. С. Пушкин в письме."]);
+}
+
+// --- growing what the annotating panel marks ---------------------------------
+// Zotero's read-aloud rule: ⌘→ grows forward, ⌘← backward, and each first
+// takes back what the other added.
+{
+	const at = (start, end) => ({ where: 3, base: 2, start, end });
+	assert.deepStrictEqual(growSpan(at(2, 2), 1, 5), at(2, 3), "grows forward");
+	assert.deepStrictEqual(growSpan(at(2, 3), -1, 5), at(2, 2), "backward first takes back the forward growth");
+	assert.deepStrictEqual(growSpan(at(2, 2), -1, 5), at(1, 2), "...and then grows backward");
+	assert.deepStrictEqual(growSpan(at(1, 2), 1, 5), at(2, 2), "forward takes back the backward growth");
+	assert.strictEqual(growSpan(at(2, 4), 1, 5), null, "not past the last unit");
+	assert.strictEqual(growSpan(at(0, 2), -1, 5), null, "nor before the first");
+
+	const units = [
+		{ text: "One.", rects: [[0, 0, 1, 1]] },
+		{ text: "Two.", rects: [[0, 2, 1, 3]] },
+		{ text: "Three.", rects: [[0, 4, 1, 5]] },
+	];
+	const session = { unitIndex: 1, span: { where: 7, base: 1, start: 0, end: 2 } };
+	const whole = spanned(units, session, 7);
+	assert.strictEqual(whole.text, "One. Two. Three.");
+	assert.strictEqual(whole.rects.length, 3, "the rects of every unit in the span");
+	assert.strictEqual(units[0].rects.length, 1, "the units themselves are left alone");
+	assert.strictEqual(spanned(units, session, 8), units[1], "a span on another page is not this one's");
+	assert.strictEqual(spanned(units, { ...session, unitIndex: 1, span: null }, 7), units[1]);
+	const dom = [
+		{ text: "A.", startNode: "n1", startOffset: 0, endNode: "n1", endOffset: 2 },
+		{ text: "B.", startNode: "n1", startOffset: 3, endNode: "n2", endOffset: 2 },
+	];
+	const run = spanned(dom, { kind: "dom", unitIndex: 0, span: { where: 0, base: 0, start: 0, end: 1 } }, 0);
+	assert.deepStrictEqual([run.startNode, run.startOffset, run.endNode, run.endOffset], ["n1", 0, "n2", 2]);
 }
 
 console.log("all tests passed");
