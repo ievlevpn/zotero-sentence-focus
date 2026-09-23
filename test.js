@@ -3129,4 +3129,42 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.strictEqual(panel.style.top, "70px");
 }
 
+// --- books in other hands and other languages ------------------------------
+// Each found by running the splitter over whole EPUBs against Zotero's own.
+{
+	const split = (t) => splitSentences(t, [], [0]).map(([a, b]) => t.slice(a, b));
+	// A book that numbers its paragraphs: "(24) Accordingly," is not "[24] Smith,".
+	assert.deepStrictEqual(split("(24) Accordingly, they say two wills conflict. God of truth, you refute them. For both wills are evil."),
+		["(24) Accordingly, they say two wills conflict.", "God of truth, you refute them.", "For both wills are evil."]);
+	assert.strictEqual(split("[12] Smith, J. A. Some paper. J. Algebra 4 (1999), 1-20.").length, 1, "a real entry is still one unit");
+	assert.strictEqual(split("[3] Hairer, Martin. A theory of regularity structures. Invent. Math. 198 (2014).").length, 1);
+	// Quotes that open a sentence in Russian and German, and an elided "’Tis".
+	assert.deepStrictEqual(split("— Какая выгода?“ „Никакой“, — ответил Траян."), ["— Какая выгода?“", "„Никакой“, — ответил Траян."]);
+	assert.deepStrictEqual(split("It confounds. ’Tis iron, that I know."), ["It confounds.", "’Tis iron, that I know."]);
+	// French sets a space before the closing guillemet.
+	assert.deepStrictEqual(split("« Pas la peine d’en parler ! » Ça devait être en 1959."),
+		["« Pas la peine d’en parler ! »", "Ça devait être en 1959."]);
+	assert.deepStrictEqual(split("Il est venu ! « Oui », dit-il."), ["Il est venu !", "« Oui », dit-il."]);
+	// Who said it, after a dash, belongs to what was said.
+	assert.deepStrictEqual(split("„Что он нашел?“ — спросил Робин. «Нашел», — отвечала Мышь."),
+		["„Что он нашел?“ — спросил Робин.", "«Нашел», — отвечала Мышь."]);
+	assert.deepStrictEqual(split("«Кто там?» — Никто. — Ладно."), ["«Кто там?»", "— Никто.", "— Ладно."]);
+	// Russian abbreviations.
+	assert.deepStrictEqual(split("Это, т. е. пример, важно. См. рис. 3 и табл. 2. Далее идёт текст."),
+		["Это, т. е. пример, важно.", "См. рис. 3 и табл. 2.", "Далее идёт текст."]);
+	assert.deepStrictEqual(split("Вот пример, т.е. проверка. Ср. гл. 4, пер. Е. Андреевой, под ред. А. Смирнова."),
+		["Вот пример, т.е. проверка.", "Ср. гл. 4, пер. Е. Андреевой, под ред. А. Смирнова."]);
+	assert.deepStrictEqual(split("Там были книги, карты и т. д. Потом пришли другие."), ["Там были книги, карты и т. д.", "Потом пришли другие."]);
+	assert.deepStrictEqual(split("Об этом писали Иванов и др. (1990) в статье."), ["Об этом писали Иванов и др. (1990) в статье."]);
+	// A year or a century ends a sentence only when a sentence follows.
+	assert.deepStrictEqual(split("Во II в. Марк Аврелий еще сдерживал натиск."), ["Во II в. Марк Аврелий еще сдерживал натиск."]);
+	assert.deepStrictEqual(split("Журнал основан в 1929 г. Марком Блоком."), ["Журнал основан в 1929 г. Марком Блоком."]);
+	assert.deepStrictEqual(split("Издание вышло в 1984 г. Эта книга отвечает задачам серии."),
+		["Издание вышло в 1984 г.", "Эта книга отвечает задачам серии."]);
+	// A Latin capital after a Cyrillic name is a numeral, not an initial.
+	assert.deepStrictEqual(split("Это сделал император Василий I. Наступление продолжалось."),
+		["Это сделал император Василий I.", "Наступление продолжалось."]);
+	assert.deepStrictEqual(split("Об этом писал А. С. Пушкин в письме."), ["Об этом писал А. С. Пушкин в письме."]);
+}
+
 console.log("all tests passed");

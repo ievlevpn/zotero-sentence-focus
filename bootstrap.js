@@ -156,6 +156,25 @@ proof lemma theorem corollary proposition definition example remark section chap
 // These do end sentences, but only when something sentence-shaped follows.
 const ABBREV_MAYBE = new Set(["etc", "al", "ff", "seq", "et"]);
 
+// Russian, read off the text before the stop rather than one token, since it
+// spaces its two-part abbreviations: "т. е.", "и т. д.". The three kinds are
+// the ones above: never an end ("см. рис. 3", "пер. Е. Андреевой"), an end
+// only when a sentence follows ("и т. д. Потом", but "и др. (1990)"), and an
+// abbreviation only before a number ("с. 272", "гл. 4").
+const RU_ABBREV_NEVER_RE = /(?:^|[^\p{L}])(?:т\.\s?[екнч]|см|ср|рис|табл|напр|св|проф|акад|доц|пер|ред|букв|лат|греч|англ|франц)$/iu;
+const RU_ABBREV_MAYBE_RE = /(?:^|[^\p{L}])(?:т\.\s?[дп]|др|пр)$/iu;
+const RU_ABBREV_NUMBER_RE = /(?:^|[^\p{L}])(?:гл|стр|с|т|ч|п|вып|ок)$/iu;
+// "в 1984 г.", "XIII в.": a year or a century, which ends a sentence as often
+// as not. Told apart by what follows, as initials are: "1984 г. Эта книга"
+// but "Во II в. Марк Аврелий".
+const RU_DATE_RE = /(?:\d|(?:^|[^\p{L}])[IVXLC]+)\s?(?:г|гг|в|вв)$/u;
+const RU_SENTENCE_OPENERS = new Set(`
+это эта этот эти он она оно они мы я вы ты но и а однако в во на с со по к ко так тогда поэтому
+здесь там все всё как когда если хотя уже даже именно при после до из от за для кроме затем потом
+наконец итак ведь вот еще ещё его ее её их то та те тот такой такая такие между через без под над
+у о об среди многие некоторые один одна одни нет да же лишь только теперь сейчас впрочем кроме
+`.trim().split(/\s+/));
+
 // --- materialising the char stream ----------------------------------------
 
 // Zotero hands back one object per glyph across an Xray boundary; reading the
@@ -1685,8 +1704,10 @@ const CLAUSE_END_RE = /[.;:!?\u2026]["'\u201d\u2019)\]]*\s*$/;
 // A bibliography entry's key. Keys come numbered, "[12]", or made of the
 // authors' names and a year, "[ABLM24]", "[Lê20]" — followed by an author's
 // name or initial. "[GG24] for a general criterion" is a citation in a
-// sentence, and "[Du]V" a formula.
-const BIB_KEY_RE = /^\s*(?:[[(]\d{1,3}[\])](?=\s*\p{Lu}[\p{L}'’-]*[,.]|\s*\p{Lu}\.)|\[[\p{L}\p{N}ˆ^'’+-]{2,12}\](?=\s+\p{Lu}|\p{Lu}\.))/u;
+// sentence, and "[Du]V" a formula. After a numbered key the surname's comma
+// must lead on to a name: a book that numbers its paragraphs opens them
+// "(24) Accordingly, when they…".
+const BIB_KEY_RE = /^\s*(?:[[(]\d{1,3}[\])](?=\s*\p{Lu}[\p{L}'’-]*(?:,\s*(?:\p{Lu}[\p{L}'’-]*[.,]|\p{Lu}\.|&)|\.)|\s*\p{Lu}\.)|\[[\p{L}\p{N}ˆ^'’+-]{2,12}\](?=\s+\p{Lu}|\p{Lu}\.))/u;
 
 // "(see also M." / "G. Crandall": a name's initials broken across a line. The
 // second line opens with a capital and a stop, which is also what a lettered
@@ -2363,8 +2384,12 @@ function buildBlockText(chars, lines) {
 // --- sentence boundaries ---------------------------------------------------
 
 const TERMINATOR_RE = /[.!?…]/;
-const CLOSER_RE = /[.!?…'"’”)\]}»›]/;
-const OPENER_RE = /[\p{Lu}\p{N}"“'‘(\[«$—–§¶•†‡]/u;
+// “ closes a quotation in Russian and German („Warum?“), and „ opens one; ’
+// opens an elided word as well as closing a quote: "’Tis iron".
+const CLOSER_RE = /[.!?…'"’”“)\]}»›]/;
+const OPENER_RE = /[\p{Lu}\p{N}"“„'‘’(\[«$—–§¶•†‡]/u;
+// French sets a space inside its guillemets: "d’en parler ! » Ça devait".
+const SPACED_CLOSER_RE = /^[ \u00a0\u202f\u2009][»›]/;
 
 // The alphabetic token ending just before `i`, dots included, so "w.r.t" and
 // "i.e" come back whole rather than as "t" and "e".
@@ -2450,6 +2475,9 @@ function isBoundary(text, i, end, math, lineStarts) {
 	// A lower-case word after the period means the sentence did not stop —
 	// unless it is a formula variable, as in "... is finite. f(x) denotes ...".
 	if (!atEnd && /\p{Ll}/u.test(next) && !math[j]) return false;
+	// "«Что он нашел?» — спросил Робин": a dash and a lower-case word after
+	// a quoted question name who asked it, in the same sentence.
+	if (/^[—–]\s*\p{Ll}/u.test(text.slice(j, j + 4))) return false;
 
 	// "..." only closes a sentence when something new starts after it.
 	if (ch === "…" || text.slice(i, i + 3) === "..." || text.slice(Math.max(0, i - 2), i + 1) === "...") {
@@ -2470,6 +2498,14 @@ function isBoundary(text, i, end, math, lineStarts) {
 		const tok = prevToken(text, i);
 		const low = tok.toLowerCase();
 		if (ABBREV_NEVER.has(low)) return false;
+		const before = text.slice(Math.max(0, i - 12), i);
+		if (RU_ABBREV_NEVER_RE.test(before)) return false;
+		if (RU_ABBREV_MAYBE_RE.test(before) && (/^[[(\d]/.test(next) || (!atEnd && !OPENER_RE.test(next)))) return false;
+		if (RU_ABBREV_NUMBER_RE.test(before) && /^\d/.test(next)) return false;
+		if (RU_DATE_RE.test(before) && !atEnd) {
+			const word = /^[\s"“„«]*(\p{L}+)/u.exec(text.slice(j, j + 24));
+			if (!word || !RU_SENTENCE_OPENERS.has(word[1].toLowerCase())) return false;
+		}
 		// A short capitalised abbreviation before a number is a reference —
 		// "Ps. 146:5", "Phys. 86, no. 1" — where the number is part of one:
 		// followed by a colon, or by more of a citation. A stop before a bare
@@ -2498,7 +2534,10 @@ function isBoundary(text, i, end, math, lineStarts) {
 		// Author initials: "J. R. R. Tolkien". A single capital is an initial
 		// when another initial follows it or one precedes it — which leaves
 		// "... in Appendix A. We now ..." free to end a sentence.
-		if (/^\p{Lu}$/u.test(tok)) {
+		// "Василий I. Наступление": a Latin capital after a Cyrillic name is a
+		// numeral, and the English list of sentence openers knows no Russian.
+		const numeral = /^[IVX]$/.test(tok) && /\p{Script=Cyrillic}{2,}\s+$/u.test(text.slice(Math.max(0, i - 30), i - 1));
+		if (/^\p{Lu}$/u.test(tok) && !numeral) {
 			if (/^\s*\p{Lu}\./u.test(text.slice(end, end + 6))) return false;
 			// "…grateful to M. Gubinelli and to H. Weber": a lone initial
 			// before a name. A sentence opening after "Appendix A." starts on
@@ -2548,7 +2587,11 @@ function splitSentences(text, math, lineStarts) {
 	for (let i = 0; i < text.length; i++) {
 		if (!TERMINATOR_RE.test(text[i])) continue;
 		let end = i + 1;
-		while (end < text.length && CLOSER_RE.test(text[end])) end++;
+		for (;;) {
+			while (end < text.length && CLOSER_RE.test(text[end])) end++;
+			if (!SPACED_CLOSER_RE.test(text.slice(end, end + 2))) break;
+			end += 2;
+		}
 		if (!isBoundary(text, i, end, math, lineStarts)) continue;
 		out.push([start, end]);
 		start = end;
