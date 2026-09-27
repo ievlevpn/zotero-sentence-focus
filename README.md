@@ -12,6 +12,11 @@ step by word, line or paragraph, and `⌘`/`Ctrl`+`C` copies the sentence you ar
 on when nothing is selected. If you have scrolled off somewhere else,
 `Option+J` (`Alt+J`) brings the page back to the ruler without moving it.
 
+With Zotero reading aloud, `Option+S` (`Alt+S`) moves the ruler to the sentence
+being read, and `Option+Shift+S` (`Alt+Shift+S`) moves read-aloud to the ruler
+(a paused read-aloud stays paused). Both are also buttons in the ruler's menu.
+Each is a single move: the two never follow each other.
+
 Press `Option+H` (`Alt+H`) to keep what you are reading: the sentence under the
 ruler — or whatever you have selected — becomes a Zotero highlight or underline.
 

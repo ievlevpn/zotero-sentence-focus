@@ -30,7 +30,9 @@ const {
 	blockText, collectBlocks, blockUnits,
 	ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel, placeAnnotate,
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
+	READ_ALOUD_KEYS, readAloudKeyPressed,
 	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
+	readAloudUnit,
 	growSpan, spanned,
 } = require("./bootstrap.js");
 
@@ -1846,6 +1848,25 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.strictEqual(bestUnit(units, { rects: [[400, 658, 500, 662]], text: "nothing like it" }), 2);
 }
 
+// Read-aloud's sentence lands the ruler on the first unit it covers: the first
+// word or line of it when the ruler steps finer, the sentence itself when the
+// two agree, and the paragraph holding it when the ruler steps coarser.
+{
+	const unit = (rects) => ({ text: "", top: rects[0][3], rects });
+	const words = [
+		unit([[70, 690, 100, 700]]), unit([[104, 690, 140, 700]]),   // the sentence before ends here
+		unit([[150, 690, 190, 700]]), unit([[194, 690, 230, 700]]), unit([[70, 670, 110, 680]]),
+	];
+	const spoken = [[150, 690, 300, 700], [70, 670, 200, 680]];
+	assert.strictEqual(readAloudUnit(words, spoken), 2, "the first word of the spoken sentence");
+	const sentences = [unit([[70, 690, 146, 700]]), unit([[150, 690, 300, 700], [70, 670, 200, 680]])];
+	assert.strictEqual(readAloudUnit(sentences, [[151, 690, 300, 700], [70, 670, 198, 680]]), 1,
+		"boundaries a glyph apart are the same sentence");
+	const paragraphs = [unit([[70, 710, 300, 740]]), unit([[70, 600, 300, 700]])];
+	assert.strictEqual(readAloudUnit(paragraphs, spoken), 1, "the paragraph it is in");
+	assert.strictEqual(readAloudUnit(words, []), 0, "nothing to go on");
+}
+
 // --- a table whose cells wrap ------------------------------------------------
 
 // A table introduced by a colon, with cells long enough to wrap onto a second
@@ -3080,7 +3101,8 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.ok(!toggleKeyPressed(key({ altKey: true, metaKey: true })), "Cmd+Alt+R is something else");
 	assert.deepStrictEqual(TOGGLE_KEYS.map(([value]) => value), ["alt-r", "off"]);
 	// No chord is offered by two of the shortcut settings at once.
-	const chords = [...TOGGLE_KEYS, ...JUMP_KEYS, ...ANNOTATE_KEYS]
+	const chords = [...TOGGLE_KEYS, ...JUMP_KEYS, ...ANNOTATE_KEYS,
+		...READ_ALOUD_KEYS.flatMap(([value, pair]) => pair ? [[value, pair.ruler], [value, pair.voice]] : [])]
 		.map(([, spec]) => spec && `${spec.code}/${spec.mod}/${spec.shift}/${spec.alt}`).filter(Boolean);
 	assert.strictEqual(new Set(chords).size, chords.length, "no two shortcut settings offer the same chord");
 
@@ -3089,6 +3111,23 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	assert.ok(options, "the toggle menu is in the Settings pane");
 	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
 	assert.deepStrictEqual(offered, TOGGLE_KEYS.map(([value]) => value));
+}
+
+// The pair of keys that trade places with read-aloud: Alt+S brings the ruler
+// to it, Alt+Shift+S sends it to the ruler. S rather than T, which is the
+// Tools menu's access key on Windows and Linux.
+{
+	const key = (over) => Object.assign({ code: "KeyS", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false }, over);
+	assert.strictEqual(readAloudKeyPressed(key({ altKey: true })), "ruler", "Alt+S brings the ruler over");
+	assert.strictEqual(readAloudKeyPressed(key({ altKey: true, shiftKey: true })), "voice", "Alt+Shift+S sends read-aloud");
+	assert.strictEqual(readAloudKeyPressed(key({})), null, "a bare S is Zotero's pointer tool");
+	assert.strictEqual(readAloudKeyPressed(key({ altKey: true, code: "KeyT" })), null);
+
+	const pane = require("fs").readFileSync("prefs.xhtml", "utf8");
+	const options = /id="sf-read-aloud-key">([\s\S]*?)<\/html:select>/.exec(pane);
+	assert.ok(options, "the read-aloud keys are in the Settings pane");
+	const offered = [...options[1].matchAll(/value="([a-z-]+)"/g)].map((m) => m[1]);
+	assert.deepStrictEqual(offered, READ_ALOUD_KEYS.map(([value]) => value));
 }
 
 // The reader menu and the Settings pane offer the same three click modes.

@@ -126,6 +126,17 @@
 		<html:p class="sf-hint">Scrolls back to the sentence the ruler is on after you have
 			looked somewhere else, without moving it — whatever the scrolling setting above
 			says, since this is asking to go there.</html:p>
+		<html:div class="sf-grid">
+			<html:label for="sf-read-aloud-key">Trade places with read-aloud</html:label>
+			<html:select id="sf-read-aloud-key">
+				<html:option value="alt-s">Option/Alt + S, and + Shift back</html:option>
+				<html:option value="off">Off</html:option>
+			</html:select>
+		</html:div>
+		<html:p class="sf-hint">Option/Alt + S moves the ruler to the sentence Zotero is reading
+			aloud, turning the ruler on if it is off; Option/Alt + Shift + S moves read-aloud to
+			the ruler, and a paused read-aloud stays paused. Once each time: neither follows
+			the other.</html:p>
 		<html:div class="sf-check">
 			<html:input id="sf-resume" type="checkbox"/>
 			<html:label for="sf-resume">Turn the ruler on again when you reopen a document</html:label>

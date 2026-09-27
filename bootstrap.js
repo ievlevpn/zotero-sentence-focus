@@ -35,6 +35,7 @@ const DEFAULTS = {
 	copyUnit: true,              // Cmd/Ctrl-C copies the step when nothing is selected
 	jumpKey: "alt-j",            // alt-j | backslash | off
 	toggleKey: "alt-r",          // alt-r | off
+	readAloudKey: "alt-s",       // alt-s (Alt+S ruler to read-aloud, Alt+Shift+S back) | off
 	countReading: true,          // keep a count of what has been read in a tab
 	resumeRuler: true,           // turn the ruler on again when a document comes back
 	resume: "",                  // where the ruler was left, per document
@@ -4707,6 +4708,36 @@ function toggleKeyPressed(e) {
 	return chordPressed(e, toggleKeySpec());
 }
 
+// Trading places with read-aloud, one key each way. Like the toggle it answers
+// with the ruler off — bringing the ruler to read-aloud turns it on — so it
+// has no second choice either. Not T: on Windows and Linux Alt+T opens the
+// Tools menu.
+const READ_ALOUD_KEYS = [
+	["alt-s", {
+		ruler: { code: "KeyS", mod: false, shift: false, alt: true },
+		voice: { code: "KeyS", mod: false, shift: true, alt: true },
+	}],
+	["off", null],
+];
+
+function readAloudKeySpec() {
+	const want = String(pref("readAloudKey"));
+	const found = READ_ALOUD_KEYS.find(([value]) => value === want);
+	return (found || READ_ALOUD_KEYS[0])[1];
+}
+
+// "ruler" to bring the ruler to read-aloud, "voice" to send read-aloud to the
+// ruler, null for any other key.
+function readAloudKeyPressed(e) {
+	const pair = readAloudKeySpec();
+	if (!pair) return null;
+	return chordPressed(e, pair.ruler) ? "ruler" : chordPressed(e, pair.voice) ? "voice" : null;
+}
+
+function readAloudKeyLabel(pair) {
+	return pair ? `${keyLabel(pair.ruler)} / ${keyLabel(pair.voice)}` : "Off";
+}
+
 // The step keys belong to a running ruler and are taken down with it. This one
 // has to answer when there is no ruler at all, so it is listened for from the
 // moment the tab has a button. Both of the tab's documents get the listener:
@@ -4721,12 +4752,21 @@ function watchToggleKey(reader, doc) {
 	keyWatched.add(reader);
 	const seen = new Set();
 	const onKey = (e) => {
-		if (!toggleKeyPressed(e) || isTypingTarget(e.target)) return;
+		if (isTypingTarget(e.target)) return;
+		const toggling = toggleKeyPressed(e);
+		const trade = !toggling && readAloudKeyPressed(e);
+		if (!toggling && !trade) return;
 		// While the annotating panel is open the keyboard is its own.
 		if (annotatePanel && annotatePanel.reader === reader) return;
+		// With nothing to trade places with, the key is left to whoever else
+		// wants it.
+		if (trade === "ruler" && !readAloudPlace(reader)) return;
+		if (trade === "voice" && !(readAloudOf(reader) && sessions.has(reader))) return;
 		e.preventDefault();
 		e.stopPropagation();
-		toggleFromKey(reader);
+		if (toggling) toggleFromKey(reader);
+		else if (trade === "ruler") rulerToReadAloudFromKey(reader);
+		else readAloudToRuler(reader);
 	};
 	const attach = (d) => {
 		if (!d || seen.has(d)) return;
@@ -4764,6 +4804,15 @@ function toggleFromKey(reader) {
 		try { doc = reader._iframeWindow.document; } catch (e) { return; }
 	}
 	toggle(reader, doc, btn);
+}
+
+function rulerToReadAloudFromKey(reader) {
+	const btn = buttonOf(reader);
+	let doc = btn && btn.ownerDocument;
+	if (!doc) {
+		try { doc = reader._iframeWindow.document; } catch (e) { return; }
+	}
+	rulerToReadAloud(reader, doc, btn);
 }
 
 // Zotero's eight annotation colours, in Zotero's order, so the digits here
@@ -5489,6 +5538,7 @@ const MENU_CSS = `
 .sfz-chip{font:11px system-ui,sans-serif;padding:3px 8px;border-radius:10px;cursor:pointer;
  border:1px solid color-mix(in srgb,CanvasText 25%,Canvas);background:transparent;color:GrayText}
 .sfz-chip[aria-pressed=true]{background:Highlight;border-color:Highlight;color:HighlightText}
+.sfz-chip:disabled{opacity:.45;cursor:default}
 .sfz-row{display:flex;align-items:center;gap:8px;margin:6px 0}
 .sfz-row label{flex:1;cursor:pointer}
 .sfz-row output{min-width:2.9em;text-align:right;color:GrayText;font-variant-numeric:tabular-nums}
@@ -5644,10 +5694,42 @@ function buildMenu(doc, reader) {
 		? `Press ${keyLabel(spec)} to scroll back to the sentence the ruler is on, without moving it.`
 		: "No shortcut; nothing listens for one."]));
 
+	if (readAloudOf(reader)) {
+		heading("Trade places with read-aloud");
+		chips("readAloudKey", READ_ALOUD_KEYS.map(([value, pair]) => [value, readAloudKeyLabel(pair), pair
+			? `${keyLabel(pair.ruler)} brings the ruler to read-aloud; ${keyLabel(pair.voice)} sends read-aloud to the ruler.`
+			: "No shortcuts; the buttons above still work."]));
+	}
+
 	heading("Annotate with");
 	chips("annotateKey", ANNOTATE_KEYS.map(([value, spec]) => [value, keyLabel(spec), spec
 		? `Press ${keyLabel(spec)} to mark what the ruler is on — or what you have selected — as a Zotero annotation.`
 		: "No shortcut; nothing listens for one."]));
+
+	// Only where Zotero reads aloud at all. Each is one move, not a link.
+	const ra = readAloudOf(reader);
+	if (ra) {
+		heading("Read aloud");
+		const row = make("div", "sfz-chips");
+		const action = (label, title, enabled, run) => {
+			const b = make("button", "sfz-chip", label);
+			b.title = title;
+			b.disabled = !enabled;
+			b.addEventListener("click", () => { closeMenu(); run(); });
+			row.append(b);
+		};
+		const keys = readAloudKeySpec();
+		action("Ruler → read-aloud", "Move the ruler to the sentence read-aloud is on."
+			+ (keys ? ` (${keyLabel(keys.ruler)})` : ""),
+			!!readAloudPlace(reader), () => rulerToReadAloud(reader, doc, buttonOf(reader)));
+		action("Read-aloud → ruler", ra.manager.active
+			? "Move read-aloud to the sentence the ruler is on. A paused read-aloud stays paused."
+				+ (keys ? ` (${keyLabel(keys.voice)})` : "")
+			: "Start reading aloud from the sentence the ruler is on."
+				+ (keys ? ` (${keyLabel(keys.voice)})` : ""),
+		sessions.has(reader), () => readAloudToRuler(reader));
+		panel.append(row);
+	}
 
 	const diagnostics = make("button", "sfz-chip sfz-diag", "Copy page diagnostics");
 	diagnostics.title = "How this page was read, for reporting a mis-highlight.";
@@ -6005,6 +6087,123 @@ function restoreDomSpot(session, spot, scroll) {
 	paintDom(session, !!scroll);
 }
 
+// --- trading places with read-aloud ------------------------------------------
+
+// Zotero's read-aloud keeps a place of its own. The two are deliberately not
+// tied together — following it would fight the keys — but either can be sent,
+// once, to where the other is.
+function readAloudOf(reader) {
+	try {
+		const internal = reader._internalReader;
+		const manager = internal && internal._enableReadAloud && internal._readAloudManager;
+		return manager ? { internal, manager } : null;
+	} catch (e) {
+		return null;             // an older reader, from before read-aloud
+	}
+}
+
+// The sentence being spoken, or the one it was paused on: a PDF position
+// ({ pageIndex, rects }) or, in a book, the selector an annotation would carry.
+function readAloudPlace(reader) {
+	const ra = readAloudOf(reader);
+	if (!ra || !ra.manager.active) return null;
+	const segment = ra.manager.activeSegment;
+	let position = segment && segment.sourcePosition;
+	if (!position) try { position = ra.internal._state.readAloudState.savedPosition; } catch (e) { /* none yet */ }
+	return position ? { position, text: String((segment && segment.text) || "") } : null;
+}
+
+// The first unit read-aloud's boxes cover at least half of — the first word or
+// line of the spoken sentence when the ruler steps finer, the sentence itself
+// when the two split alike. A ruler stepping coarser covers more than it is
+// covered, and then the unit that shares the most with it is the one holding it.
+function readAloudUnit(units, rects) {
+	for (let i = 0; i < units.length; i++) {
+		const area = units[i].rects.reduce((sum, r) => sum + Math.abs((r[2] - r[0]) * (r[3] - r[1])), 0);
+		if (area > 0 && boxOverlap(units[i].rects, rects) >= area / 2) return i;
+	}
+	return bestUnit(units, { rects });
+}
+
+function rulerToReadAloud(reader, doc, btn) {
+	const place = readAloudPlace(reader);
+	if (!place) return;
+	let session = sessions.get(reader);
+	if (!session) {
+		session = startSession(reader, doc, btn);
+		setButtonState(btn, !!session);
+		if (!session) return;
+	}
+	// Queued behind whatever the ruler is doing, a restore on switching on
+	// included, so it is the last word.
+	if (session.kind === "dom") {
+		enqueue(session, () => domToReadAloud(session, place));
+		return;
+	}
+	enqueue(session, async () => {
+		const page = place.position.pageIndex | 0;
+		const rects = Array.from(place.position.rects || [], (r) => Array.from(r, Number));
+		const units = await unitsAt(session, page);
+		if (!live(session) || !units.length) return;
+		session.pageIndex = page;
+		session.unitIndex = readAloudUnit(units, rects);
+		paint(session, true, true);
+		prefetch(session);
+	});
+}
+
+function domToReadAloud(session, place) {
+	const dv = domViewOf(session.reader);
+	if (!dv) return;
+	let range = null;
+	try {
+		range = dv.view.toDisplayedRange(cloneForReader(session.reader, place.position));
+	} catch (e) { /* a section read-aloud has and the view has not laid out */ }
+	if (!range) return;
+	const section = sectionIndexOf(dv, range.startContainer);
+	const units = domUnitsAt(session, section);
+	for (let k = 0; k < units.length; k++) {
+		let inside = false;
+		try {
+			inside = rangeOf(dv.doc, units[k]).comparePoint(range.startContainer, range.startOffset) === 0;
+		} catch (e) { continue; }
+		if (inside) {
+			session.section = section;
+			session.unitIndex = k;
+			paintDom(session, true, true);
+			return;
+		}
+	}
+}
+
+// Read-aloud from the ruler's unit. A paused read-aloud stays paused — moving
+// it is not asking it to speak — and one that is off starts there, the way
+// Zotero's own "Read aloud from here" does.
+function readAloudToRuler(reader) {
+	const ra = readAloudOf(reader);
+	const session = sessions.get(reader);
+	if (!ra || !session) return;
+	let position = null;
+	if (session.kind === "dom") {
+		const dv = domViewOf(reader);
+		const unit = currentDomUnit(session);
+		if (!dv || !unit || !dv.view.toSelector) return;
+		try { position = JSON.parse(JSON.stringify(dv.view.toSelector(rangeOf(dv.doc, unit)))); } catch (e) { return; }
+	} else {
+		const unit = currentUnit(session);
+		if (!unit || !unit.rects.length) return;
+		position = { pageIndex: session.pageIndex, rects: unit.rects.map((r) => r.slice(0, 4)) };
+	}
+	if (!position) return;
+	const paused = ra.manager.active && ra.manager.paused;
+	try {
+		ra.internal.startReadAloudAtPosition(cloneForReader(reader, position));
+		if (paused) ra.manager.pause();
+	} catch (e) {
+		Zotero.debug("Sentence Focus: read-aloud would not move - " + e);
+	}
+}
+
 // A document that was being read with the ruler on gets it back when it is
 // opened again — unless that has been turned off, in which case the place is
 // still remembered and turning the ruler on goes there.
@@ -6105,7 +6304,7 @@ const PREF_EFFECT = {
 	mergeDisplay: "reanalyse",
 	autoScroll: "none", scrollMargin: "none", clickMoves: "none",
 	annotateKey: "none", annotateColor: "none", annotateType: "none", copyUnit: "none",
-	jumpKey: "none", toggleKey: "none", countReading: "none",
+	jumpKey: "none", toggleKey: "none", readAloudKey: "none", countReading: "none",
 	resumeRuler: "none", resume: "none",
 };
 
@@ -6219,8 +6418,9 @@ if (typeof module !== "undefined") {
 		ANNOTATE_KEYS, ANNOTATION_COLORS, ANNOTATION_TYPES, annotateKeyPressed, keyLabel,
 		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
 		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
+		READ_ALOUD_KEYS, readAloudKeyPressed,
 		growSpan, spanned,
 		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit,
-		SPOT_LIMIT, SPOT_BYTES,
+		SPOT_LIMIT, SPOT_BYTES, readAloudUnit,
 	};
 }
