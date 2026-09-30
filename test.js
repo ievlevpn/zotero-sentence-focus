@@ -32,7 +32,7 @@ const {
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 	READ_ALOUD_KEYS, readAloudKeyPressed,
 	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
-	readAloudUnit,
+	readAloudUnit, awayText,
 	growSpan, spanned,
 } = require("./bootstrap.js");
 
@@ -1846,6 +1846,18 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.strictEqual(bestUnit(units, { rects: [], text: "" }), 0, "nothing to go on: the top of the page");
 	// A box on a page whose text has changed beyond recognition lands nearby.
 	assert.strictEqual(bestUnit(units, { rects: [[400, 658, 500, 662]], text: "nothing like it" }), 2);
+}
+
+// Turning the ruler on leaves the page where it is; when the saved place is
+// out of sight, the note says where, and offers what the settings allow.
+{
+	const j = JUMP_KEYS[0][1];
+	assert.strictEqual(awayText("The ruler is on page 200.", "click", j),
+		"The ruler is on page 200. Click a sentence here to bring it over; Alt+J goes to it.");
+	assert.strictEqual(awayText("The ruler is on page 200.", "mod-click", j),
+		"The ruler is on page 200. Ctrl-click a sentence here to bring it over; Alt+J goes to it.");
+	assert.strictEqual(awayText("The ruler is on page 200.", "off", null), "The ruler is on page 200.",
+		"no clicking and no jump key: only where it is");
 }
 
 // Read-aloud's sentence lands the ruler on the first unit it covers: the first

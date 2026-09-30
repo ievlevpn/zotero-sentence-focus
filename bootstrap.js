@@ -3854,11 +3854,16 @@ function sessionKey(session, e, step) {
 // `[` and `]` are the same keys line_focus uses and collide with nothing in
 // the reader. They are taken on the way down, in both the reader document and
 // the nested pdf.js one, because whichever has focus is where the key lands.
-function startSession(reader, doc, btn) {
+// `restore` says what happens to a saved place. "scroll" (a document being
+// reopened) goes there. "note" (the button or the key) puts the ruler back
+// there without moving the page — you may have turned it on to read what is
+// in front of you — and says where it is if that is out of sight. "quiet" is
+// for a caller about to move the ruler somewhere else anyway.
+function startSession(reader, doc, btn, restore = "note") {
 	const v = viewerOf(reader);
 	if (!v) {
 		const dv = domViewOf(reader);
-		if (dv) return startDomSession(reader, doc, btn, dv);
+		if (dv) return startDomSession(reader, doc, btn, dv, restore);
 		Zotero.debug("Sentence Focus: no document view in this tab");
 		return null;
 	}
@@ -3930,7 +3935,7 @@ function startSession(reader, doc, btn) {
 	sessions.set(reader, session);
 	const spot = spotFor(reader);
 	enqueue(session, () => (spot && spot.kind === "pdf"
-		? restorePdfSpot(session, spot, true)
+		? restorePdfSpot(session, spot, restore)
 		: focusPage(session, session.pageIndex, "visible")));
 	return session;
 }
@@ -4483,7 +4488,7 @@ function focusDomAtPoint(session, x, y) {
 	}
 }
 
-function startDomSession(reader, doc, btn, dv) {
+function startDomSession(reader, doc, btn, dv, restore = "note") {
 	const session = {
 		kind: "dom", reader, btn,
 		section: 0, unitIndex: 0,
@@ -4535,7 +4540,7 @@ function startDomSession(reader, doc, btn, dv) {
 	sessions.set(reader, session);
 	const spot = spotFor(reader);
 	enqueue(session, () => (spot && spot.kind === "dom"
-		? restoreDomSpot(session, spot, true)
+		? restoreDomSpot(session, spot, restore)
 		: focusDomVisible(session)));
 	return session;
 }
@@ -4635,7 +4640,7 @@ function copyCurrent(session) {
 
 // A word where the eye already is, gone before it is in the way. Copying is
 // otherwise invisible: nothing is selected, so nothing changes on the page.
-function flash(session, text, rect) {
+function flash(session, text, rect, ms = 750) {
 	const doc = readerDoc(session);
 	const win = doc && doc.defaultView;
 	if (!win) return;
@@ -4648,7 +4653,7 @@ function flash(session, text, rect) {
 	win.setTimeout(() => {
 		el.classList.add("sfz-gone");
 		win.setTimeout(() => { try { el.remove(); } catch (e) { /* its document went */ } }, 300);
-	}, 750);
+	}, ms);
 }
 
 // Scrolling away from the ruler is easy — a page turn, a look at a figure, a
@@ -5116,7 +5121,7 @@ const ANNOTATE_CSS = `
 .sfz-toast{position:fixed;z-index:100000;padding:4px 11px;border-radius:9px;
  background:Canvas;color:CanvasText;border:1px solid color-mix(in srgb,CanvasText 16%,Canvas);
  box-shadow:0 8px 22px rgba(0,0,0,.25);font:12px system-ui,sans-serif;pointer-events:none;
- opacity:1;transition:opacity .3s ease}
+ opacity:1;transition:opacity .3s ease;max-width:24em;line-height:1.4}
 .sfz-toast.sfz-gone{opacity:0}
 `;
 
@@ -6040,22 +6045,29 @@ function bestUnit(units, spot) {
 	return 0;
 }
 
-// Put the ruler back where the document was left. `scroll` is false for an
-// update, where the tab is already showing what was being read and moving it
-// would be the plugin taking over the page, and true for a document being
-// opened, where the view lands wherever Zotero last left it.
-async function restorePdfSpot(session, spot, scroll) {
+// Put the ruler back where the document was left; `restore` is startSession's.
+async function restorePdfSpot(session, spot, restore) {
 	const page = Math.max(0, spot.page | 0);
 	const units = await unitsAt(session, page);
 	if (!live(session)) return;
 	if (!units.length) { await focusPage(session, session.pageIndex, "visible"); return; }
 	session.pageIndex = page;
 	session.unitIndex = bestUnit(units, spot);
-	paint(session, !!scroll);
+	paint(session, restore === "scroll");
 	prefetch(session);
+	if (restore !== "note") return;
+	const v = viewerOf(session.reader);
+	const pv = v && pageViewOf(v, page);
+	const unit = currentUnit(session);
+	const container = v && v.doc.getElementById("viewerContainer");
+	const box = pv && unit && unitClientBox(pv, unit);
+	const view = container && container.getBoundingClientRect();
+	if (!box || !view || (box.bottom > view.top && box.top < view.bottom)) return;
+	const label = (pv && pv.pageLabel) || String(page + 1);
+	noteAway(session, `The ruler is on page ${label}.`);
 }
 
-function restoreDomSpot(session, spot, scroll) {
+function restoreDomSpot(session, spot, restore) {
 	const dv = domViewOf(session.reader);
 	if (!dv) return;
 	if (Number.isInteger(spot.section)) session.section = spot.section;
@@ -6084,7 +6096,38 @@ function restoreDomSpot(session, spot, scroll) {
 	}
 	if (index < 0) { focusDomVisible(session); return; }
 	session.unitIndex = index;
-	paintDom(session, !!scroll);
+	paintDom(session, restore === "scroll");
+	if (restore !== "note") return;
+	// A book has no page numbers to give, only which way the ruler lies.
+	let where = null;
+	try {
+		const renderer = dv.view.renderers && dv.view.renderers[session.section];
+		const r = rangeOf(dv.doc, currentDomUnit(session)).getBoundingClientRect();
+		const W = dv.win.innerWidth, H = dv.win.innerHeight;
+		if (renderer && !renderer.mounted) where = "elsewhere";
+		else if (r.bottom <= 0 || r.right <= 0) where = "back";
+		else if (r.top >= H || r.left >= W) where = "ahead";
+	} catch (e) { /* the unit's nodes went while this ran */ }
+	if (!where) return;
+	noteAway(session, where === "elsewhere" ? "The ruler is elsewhere in the book."
+		: `The ruler is further ${where === "back" ? "back" : "on"} in the book.`);
+}
+
+// Tells you the ruler came back out of sight, and the two ways out of that:
+// bring it here, or go there.
+function noteAway(session, lead) {
+	const btn = session.btn && session.btn.isConnected ? session.btn : null;
+	flash(session, awayText(lead, clickMoves(), jumpKeySpec()),
+		btn ? btn.getBoundingClientRect() : null, 6000);
+}
+
+function awayText(lead, clickMode, jumpSpec) {
+	const here = clickMode === "click" ? "Click a sentence here to bring it over"
+		: clickMode === "mod-click" ? `${onMac() ? "⌘" : "Ctrl"}-click a sentence here to bring it over`
+		: "";
+	const there = jumpSpec ? `${keyLabel(jumpSpec)} goes to it` : "";
+	const rest = [here, there].filter(Boolean).join("; ");
+	return rest ? `${lead} ${rest}.` : lead;
 }
 
 // --- trading places with read-aloud ------------------------------------------
@@ -6130,7 +6173,7 @@ function rulerToReadAloud(reader, doc, btn) {
 	if (!place) return;
 	let session = sessions.get(reader);
 	if (!session) {
-		session = startSession(reader, doc, btn);
+		session = startSession(reader, doc, btn, "quiet");
 		setButtonState(btn, !!session);
 		if (!session) return;
 	}
@@ -6215,7 +6258,7 @@ function autoStart(reader, doc, btn) {
 		// The toolbar is built before the document in it is loaded, so this
 		// waits for a view rather than asking for one that is not there yet.
 		if (viewerOf(reader) || domViewOf(reader)) {
-			const session = startSession(reader, doc, btn);
+			const session = startSession(reader, doc, btn, "scroll");
 			setButtonState(btn, !!session);
 			return;
 		}
@@ -6420,7 +6463,7 @@ if (typeof module !== "undefined") {
 		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 		READ_ALOUD_KEYS, readAloudKeyPressed,
 		growSpan, spanned,
-		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit,
+		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, awayText,
 		SPOT_LIMIT, SPOT_BYTES, readAloudUnit,
 	};
 }
