@@ -36,6 +36,7 @@ const DEFAULTS = {
 	jumpKey: "alt-j",            // alt-j | backslash | off
 	toggleKey: "alt-r",          // alt-r | off
 	readAloudKey: "alt-s",       // alt-s (Alt+S ruler to read-aloud, Alt+Shift+S back) | off
+	followReadAloud: false,      // the ruler moves with read-aloud, sentence by sentence
 	countReading: true,          // keep a count of what has been read in a tab
 	resumeRuler: true,           // turn the ruler on again when a document comes back
 	resume: "",                  // where the ruler was left, per document
@@ -3952,6 +3953,7 @@ function startSession(reader, doc, btn, restore = "note") {
 	}
 
 	sessions.set(reader, session);
+	followReadAloud(session);
 	const spot = spotFor(reader);
 	enqueue(session, () => (spot && spot.kind === "pdf"
 		? restorePdfSpot(session, spot, restore)
@@ -4555,6 +4557,7 @@ function startDomSession(reader, doc, btn, dv, restore = "note") {
 	}
 	session.clear = () => clearDomPaint(session);
 	sessions.set(reader, session);
+	followReadAloud(session);
 	const spot = spotFor(reader);
 	enqueue(session, () => (spot && spot.kind === "dom"
 		? restoreDomSpot(session, spot, restore)
@@ -5748,6 +5751,8 @@ function buildMenu(doc, reader) {
 		chips("readAloudKey", READ_ALOUD_KEYS.map(([value, pair]) => [value, readAloudKeyLabel(pair), pair
 			? `${keyLabel(pair.ruler)} brings the ruler to read-aloud; ${keyLabel(pair.voice)} sends read-aloud to the ruler.`
 			: "No shortcuts; the buttons above still work."]));
+		toggle("followReadAloud", "Follow read-aloud",
+			"While the ruler is on, it moves to each sentence as read-aloud reaches it.");
 	}
 
 	heading("Annotate with");
@@ -6176,9 +6181,8 @@ function awayText(lead, clickMode, jumpSpec) {
 
 // --- trading places with read-aloud ------------------------------------------
 
-// Zotero's read-aloud keeps a place of its own. The two are deliberately not
-// tied together — following it would fight the keys — but either can be sent,
-// once, to where the other is.
+// Zotero's read-aloud keeps a place of its own. Either can be sent, once, to
+// where the other is; and the ruler can be set to follow read-aloud.
 function readAloudOf(reader) {
 	try {
 		const internal = reader._internalReader;
@@ -6223,23 +6227,57 @@ function rulerToReadAloud(reader, doc, btn) {
 	}
 	// Queued behind whatever the ruler is doing, a restore on switching on
 	// included, so it is the last word.
-	if (session.kind === "dom") {
-		enqueue(session, () => domToReadAloud(session, place));
-		return;
-	}
-	enqueue(session, async () => {
-		const page = place.position.pageIndex | 0;
-		const rects = Array.from(place.position.rects || [], (r) => Array.from(r, Number));
-		const units = await unitsAt(session, page);
-		if (!live(session) || !units.length) return;
-		session.pageIndex = page;
-		session.unitIndex = readAloudUnit(units, rects);
-		paint(session, true, true);
-		prefetch(session);
-	});
+	enqueue(session, () => moveToReadAloud(session, place, true));
 }
 
-function domToReadAloud(session, place) {
+// `insist` scrolls to the ruler whatever the scrolling setting says: asked
+// for, it is a jump. Following, it is reading, and scrolls as stepping would.
+async function moveToReadAloud(session, place, insist) {
+	if (session.kind === "dom") { domToReadAloud(session, place, insist); return; }
+	const page = place.position.pageIndex | 0;
+	const rects = Array.from(place.position.rects || [], (r) => Array.from(r, Number));
+	const units = await unitsAt(session, page);
+	if (!live(session) || !units.length) return;
+	session.pageIndex = page;
+	session.unitIndex = readAloudUnit(units, rects);
+	paint(session, true, insist);
+	prefetch(session);
+}
+
+// Zotero says nothing when read-aloud moves on to the next sentence, so a
+// running ruler looks four times a second, and moves only when the sentence
+// has changed — between sentences, [ and ] are still yours. An open annotating
+// panel holds the ruler where it is.
+function followReadAloud(session) {
+	let win = null;
+	try { win = session.reader._iframeWindow; } catch (e) { return; }
+	if (!win || !win.setInterval) return;
+	const tick = () => {
+		if (!live(session) || !pref("followReadAloud") || annotateOpenFor(session)) {
+			session.followed = null;
+			return;
+		}
+		const place = readAloudPlace(session.reader);
+		if (!place) return;
+		// By what it says and where, not by object: what the reader hands
+		// across may not be the same wrapper twice.
+		const key = placeKey(place);
+		if (key === session.followed) return;
+		session.followed = key;
+		enqueue(session, () => moveToReadAloud(session, place, false));
+	};
+	const timer = win.setInterval(tick, 250);
+	session.handlers.push(() => { try { win.clearInterval(timer); } catch (e) { /* the tab went */ } });
+}
+
+function placeKey(place) {
+	const p = place.position;
+	let at = "";
+	try { at = p.value || `${p.pageIndex}:${Array.from(p.rects[0] || [], (n) => Math.round(n)).join(",")}`; } catch (e) { /* no rects */ }
+	return `${at}|${place.text}`;
+}
+
+function domToReadAloud(session, place, insist) {
 	const dv = domViewOf(session.reader);
 	if (!dv) return;
 	let range = null;
@@ -6257,7 +6295,7 @@ function domToReadAloud(session, place) {
 		if (inside) {
 			session.section = section;
 			session.unitIndex = k;
-			paintDom(session, true, true);
+			paintDom(session, true, insist);
 			return;
 		}
 	}
@@ -6391,7 +6429,7 @@ const PREF_EFFECT = {
 	mergeDisplay: "reanalyse",
 	autoScroll: "none", scrollMargin: "none", clickMoves: "none",
 	annotateKey: "none", annotateColor: "none", annotateType: "none", copyUnit: "none",
-	jumpKey: "none", toggleKey: "none", readAloudKey: "none", countReading: "none",
+	jumpKey: "none", toggleKey: "none", readAloudKey: "none", followReadAloud: "none", countReading: "none",
 	resumeRuler: "none", resume: "none",
 };
 
@@ -6508,6 +6546,6 @@ if (typeof module !== "undefined") {
 		READ_ALOUD_KEYS, readAloudKeyPressed,
 		growSpan, spanned,
 		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, awayText, panelLetter, lookOf,
-		SPOT_LIMIT, SPOT_BYTES, readAloudUnit,
+		SPOT_LIMIT, SPOT_BYTES, readAloudUnit, placeKey,
 	};
 }

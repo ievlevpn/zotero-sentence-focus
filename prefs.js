@@ -27,7 +27,8 @@
 			["sf-annotate-key", "annotateKey"], ["sf-click", "clickMoves"], ["sf-jump-key", "jumpKey"],
 			["sf-toggle-key", "toggleKey"], ["sf-read-aloud-key", "readAloudKey"]];
 		const checks = [["sf-behind", "behind"], ["sf-merge", "mergeDisplay"], ["sf-copy", "copyUnit"],
-			["sf-count", "countReading"], ["sf-resume", "resumeRuler"]];
+			["sf-count", "countReading"], ["sf-resume", "resumeRuler"],
+			["sf-follow", "followReadAloud"]];
 		const sliders = [["sf-opacity", "opacity"], ["sf-padding", "padding"], ["sf-margin", "scrollMargin"]];
 
 		for (const [id, key] of menus) {

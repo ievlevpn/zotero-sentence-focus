@@ -14,8 +14,9 @@ on when nothing is selected. If you have scrolled off somewhere else,
 
 With Zotero reading aloud, `Option+S` (`Alt+S`) moves the ruler to the sentence
 being read, and `Option+Shift+S` (`Alt+Shift+S`) moves read-aloud to the ruler
-(a paused read-aloud stays paused). Both are also buttons in the ruler's menu.
-Each is a single move: the two never follow each other.
+(a paused read-aloud stays paused). Both are also buttons in the ruler's menu,
+where "Follow read-aloud" makes the ruler move along with it, sentence by
+sentence.
 
 Press `Option+H` (`Alt+H`) to keep what you are reading: the sentence under the
 ruler — or whatever you have selected — becomes a Zotero highlight or underline.

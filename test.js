@@ -32,7 +32,7 @@ const {
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 	READ_ALOUD_KEYS, readAloudKeyPressed,
 	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
-	readAloudUnit, awayText, panelLetter, lookOf,
+	readAloudUnit, awayText, panelLetter, lookOf, placeKey,
 	growSpan, spanned,
 } = require("./bootstrap.js");
 
@@ -1883,6 +1883,18 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 		"The ruler is on page 200. Ctrl-click a sentence here to bring it over; Alt+J goes to it.");
 	assert.strictEqual(awayText("The ruler is on page 200.", "off", null), "The ruler is on page 200.",
 		"no clicking and no jump key: only where it is");
+}
+
+// Following read-aloud moves the ruler only when the sentence changes, which
+// is told by where it is and what it says.
+{
+	const a = { position: { pageIndex: 3, rects: [[72.2, 600.4, 300, 610]] }, text: "One." };
+	const same = { position: { pageIndex: 3, rects: [[72.2, 600.4, 300, 610]] }, text: "One." };
+	const next = { position: { pageIndex: 3, rects: [[72.2, 580, 300, 590]] }, text: "Two." };
+	const book = { position: { type: "FragmentSelector", value: "epubcfi(/6/4!/4/2,/1:0,/1:20)" }, text: "One." };
+	assert.strictEqual(placeKey(a), placeKey(same), "a fresh copy of the same sentence is the same");
+	assert.notStrictEqual(placeKey(a), placeKey(next));
+	assert.ok(placeKey(book).startsWith("epubcfi("), "a book's sentence is told by its selector");
 }
 
 // Read-aloud's sentence lands the ruler on the first unit it covers: the first
