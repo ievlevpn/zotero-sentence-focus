@@ -32,7 +32,7 @@ const {
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 	READ_ALOUD_KEYS, readAloudKeyPressed,
 	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
-	readAloudUnit, awayText,
+	readAloudUnit, awayText, panelLetter, lookOf,
 	growSpan, spanned,
 } = require("./bootstrap.js");
 
@@ -1846,6 +1846,31 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.strictEqual(bestUnit(units, { rects: [], text: "" }), 0, "nothing to go on: the top of the page");
 	// A box on a page whose text has changed beyond recognition lands nearby.
 	assert.strictEqual(bestUnit(units, { rects: [[400, 658, 500, 662]], text: "nothing like it" }), 2);
+}
+
+// The panel's letters are the keys, not the characters: on a Russian layout
+// H types "р" and U types "г", and they must still choose the kind of mark.
+{
+	const key = (code, k, over) => Object.assign({ code, key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false }, over);
+	assert.strictEqual(panelLetter(key("KeyH", "р")), "h");
+	assert.strictEqual(panelLetter(key("KeyU", "г")), "u");
+	assert.strictEqual(panelLetter(key("KeyN", "т")), "n");
+	assert.strictEqual(panelLetter(key("KeyH", "H", { shiftKey: true })), "h", "Shift does not matter");
+	assert.strictEqual(panelLetter(key("KeyH", "h", { metaKey: true })), null, "⌘H is not a letter for the panel");
+	assert.strictEqual(panelLetter(key("Digit3", "3")), "3");
+	assert.strictEqual(panelLetter(key("KeyQ", "й")), null);
+}
+
+// While the panel is open on the ruler's unit, the ruler is drawn as the mark
+// will be: the chosen colour, as a wash or an underline, whatever the ruler's
+// own style is.
+{
+	const plain = lookOf({});
+	assert.ok(["tint", "rounded", "soft", "marker", "underline", "dim"].includes(plain.style));
+	const hi = lookOf({ preview: { color: "#2ea8e5", type: "highlight" } });
+	assert.strictEqual(hi.style, "tint");
+	assert.strictEqual(hi.color, "#2ea8e5");
+	assert.strictEqual(lookOf({ preview: { color: "#ff6666", type: "underline" } }).style, "underline");
 }
 
 // Turning the ruler on leaves the page where it is; when the saved place is

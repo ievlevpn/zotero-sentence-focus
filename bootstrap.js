@@ -3415,6 +3415,27 @@ function styleName() {
 	return STYLE_NAMES.has(name) ? name : DEFAULTS.style;
 }
 
+// How the ruler is drawn: the settings, unless the annotating panel is open
+// on it, in which case it is drawn as the mark will be — the chosen colour, as
+// a wash or an underline — so the result is seen before it is made, the way
+// Zotero's read-aloud popup shows it.
+const PREVIEW_STRENGTH = 0.45;
+function lookOf(session) {
+	const preview = session && session.preview;
+	if (preview) {
+		return {
+			style: preview.type === "underline" ? "underline" : "tint",
+			color: solidColor(preview.color),
+			strength: PREVIEW_STRENGTH,
+		};
+	}
+	return {
+		style: styleName(),
+		color: solidColor(String(pref("color"))),
+		strength: Math.min(0.95, Math.max(0.05, (Number(pref("opacity")) || DEFAULTS.opacity) / 100)),
+	};
+}
+
 let idSeq = 0;
 const uniqueId = (prefix) => `${prefix}-${++idSeq}`;
 
@@ -3475,13 +3496,11 @@ function paint(session, scroll, insist) {
 	if (!pv) return;
 	injectCSS(v.doc);
 
-	const style = styleName();
-	const strength = Math.min(0.95, Math.max(0.05, (Number(pref("opacity")) || DEFAULTS.opacity) / 100));
+	const { style, strength, color } = lookOf(session);
 	// A rule two pixels tall carries far less colour than a wash over a whole
 	// line, so the same setting has to push it harder to read as the same
 	// weight on the page.
 	const alpha = style === "underline" ? Math.min(0.95, strength * 1.7) : strength;
-	const color = solidColor(String(pref("color")));
 	const aspect = pageAspect(pv);
 	const raw = unit.rects.map((r) => toUserBox(r, pv.viewport, aspect));
 	// The page matrix is a rotation and a uniform scale, so one box's diagonal
@@ -4250,10 +4269,9 @@ function domUnitsAt(session, section) {
 // The highlight's look, as the pseudo-element the browser paints it with. Only
 // colour and decoration can be styled there, so the shaped styles — rounded,
 // soft, marker — come out as the plain tint.
-function highlightCSS() {
-	const style = styleName();
-	const strength = Math.min(0.95, Math.max(0.05, (Number(pref("opacity")) || DEFAULTS.opacity) / 100));
-	const hex = solidColor(String(pref("color"))).slice(1);
+function highlightCSS(session) {
+	const { style, strength, color } = lookOf(session);
+	const hex = color.slice(1);
 	const [r, g, b] = [0, 2, 4].map((k) => parseInt(hex.slice(k, k + 2), 16));
 	const colour = (a) => `rgb(${r} ${g} ${b} / ${a.toFixed(3)})`;
 	if (style === "underline") {
@@ -4281,8 +4299,7 @@ function paintDomBoxes(session, dv, range) {
 	const layer = dv.doc.createElement("div");
 	layer.className = "sfz-dom-layer";
 	layer.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2147483647";
-	const strength = Math.min(0.95, Math.max(0.05, (Number(pref("opacity")) || DEFAULTS.opacity) / 100));
-	const colour = solidColor(String(pref("color")));
+	const { strength, color: colour } = lookOf(session);
 	const place = () => {
 		layer.replaceChildren();
 		const sx = dv.win.scrollX, sy = dv.win.scrollY;
@@ -4346,8 +4363,8 @@ function paintDom(session, scroll, insist) {
 		paintDomBoxes(session, dv, range);
 		return;
 	}
-	setDomStyle(dv, highlightCSS());
-	if (styleName() === "dim") {
+	setDomStyle(dv, highlightCSS(session));
+	if (lookOf(session).style === "dim") {
 		const root = dv.doc.body;
 		const before = dv.doc.createRange(), after = dv.doc.createRange();
 		before.setStart(root, 0);
@@ -5174,6 +5191,15 @@ function holdNavigation(reader) {
 
 const annotateOpenFor = (session) => !!annotatePanel && annotatePanel.reader === session.reader;
 
+// The panel's letters and digits, by the key pressed rather than the character
+// it types: on a Russian layout H types "р", and must still mean highlight.
+// With ⌘, Ctrl or Alt held the key is someone else's.
+function panelLetter(e) {
+	if (e.metaKey || e.ctrlKey || e.altKey) return null;
+	const m = /^(?:Key([HUN])|(?:Digit|Numpad)([1-8]))$/.exec(e.code || "");
+	return m ? (m[1] ? m[1].toLowerCase() : m[2]) : null;
+}
+
 function toggleAnnotate(session) {
 	if (annotateOpenFor(session)) { closeAnnotate(); return; }
 	openAnnotate(session);
@@ -5203,6 +5229,17 @@ function openAnnotate(session) {
 	panel.setAttribute("aria-label", "Annotate");
 
 	const state = { color: annotateColor(), type: annotateType(), made: false };
+	// The ruler shows the mark to be made while it is the ruler's unit that
+	// will be marked; a selection shows itself.
+	const repaint = () => (session.kind === "dom" ? paintDom(session, false) : paint(session, false));
+	const preview = () => {
+		const want = !blocked && target && target.from === "unit" ? { color: state.color, type: state.type } : null;
+		const had = session.preview;
+		if (!want && !had) return;
+		if (want && had && want.color === had.color && want.type === had.type) return;
+		session.preview = want;
+		try { repaint(); } catch (e) { /* the view is between renders */ }
+	};
 	const title = make("div", "sfz-pop-title");
 	const heading = make("strong", null, "Annotate");
 	const what = make("span");
@@ -5239,6 +5276,7 @@ function openAnnotate(session) {
 	const pickColor = (hex, focus) => {
 		state.color = hex;
 		showColor();
+		preview();
 		if (focus) {
 			const dot = [...dots.children].find((d) => d.dataset.color === hex);
 			if (dot) dot.focus();
@@ -5265,6 +5303,7 @@ function openAnnotate(session) {
 	const showType = () => {
 		for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.type === state.type));
 		primary.textContent = state.type === "underline" ? "Underline it" : "Highlight it";
+		preview();
 	};
 	for (const [value, label] of ANNOTATION_TYPES) {
 		const b = make("button", null, label);
@@ -5336,8 +5375,8 @@ function openAnnotate(session) {
 		target = next;
 		showTarget();
 		placeAnnotate(doc, panel, target.rect);
+		preview();
 	};
-	const repaint = () => (session.kind === "dom" ? paintDom(session, false) : paint(session, false));
 	const stepTarget = (delta) => enqueue(session, async () => {
 		session.span = null;
 		await (session.kind === "dom" ? moveDom : move)(session, delta);
@@ -5381,15 +5420,16 @@ function openAnnotate(session) {
 			if (e.target && e.target.tagName === "BUTTON" && e.target.className !== "sfz-dot") return;
 			stop(); apply(false); return;
 		}
-		if (key === "n" || key === "N") { stop(); apply(true); return; }
-		if (key === "h" || key === "H") { stop(); state.type = "highlight"; showType(); return; }
-		if (key === "u" || key === "U") { stop(); state.type = "underline"; showType(); return; }
+		const letter = panelLetter(e);
+		if (letter === "n") { stop(); apply(true); return; }
+		if (letter === "h") { stop(); state.type = "highlight"; showType(); return; }
+		if (letter === "u") { stop(); state.type = "underline"; showType(); return; }
 		// A digit chooses a colour and waits: what is wanted next may be a
 		// note, and closing here would take that away for the sake of one
 		// keystroke.
-		if (key >= "1" && key <= "8") {
+		if (letter && letter >= "1" && letter <= "8") {
 			stop();
-			pickColor(ANNOTATION_COLORS[Number(key) - 1][0], true);
+			pickColor(ANNOTATION_COLORS[Number(letter) - 1][0], true);
 			return;
 		}
 		if (key === "ArrowRight" || key === "ArrowDown") {
@@ -5426,11 +5466,15 @@ function openAnnotate(session) {
 			// its last unit, as reading would; let go, it goes back to where
 			// it was.
 			const span = session.span;
+			const previewed = !!session.preview;
+			session.preview = null;
 			if (span) {
 				session.span = null;
 				if (span.where === (session.kind === "dom" ? session.section : session.pageIndex)) {
 					session.unitIndex = state.made ? span.end : span.base;
 				}
+			}
+			if (span || previewed) {
 				try { repaint(); } catch (e) { /* the tab is closing */ }
 			}
 		},
@@ -6463,7 +6507,7 @@ if (typeof module !== "undefined") {
 		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 		READ_ALOUD_KEYS, readAloudKeyPressed,
 		growSpan, spanned,
-		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, awayText,
+		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, awayText, panelLetter, lookOf,
 		SPOT_LIMIT, SPOT_BYTES, readAloudUnit,
 	};
 }
