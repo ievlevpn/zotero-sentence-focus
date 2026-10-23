@@ -2591,6 +2591,30 @@ function fromReport(rows, opts = {}) {
 	assert.ok(top < 270, `nothing pokes into the line above: ${JSON.stringify(units[0].rects.map((r) => r.map(Math.round)))}`);
 }
 
+// --- a formula displayed under a list item, opening on a fraction ----------------------
+
+// "(i) If G_N → (L, o) …, and for every fixed k ≥ 0" and then, centred under
+// it, "1/V_N tr(A^k) → ∫ x^k dν(x) = #{…}." The formula's first line is only
+// the numerator `1`, far left of the middle, which read as the item's own
+// continuation set in under its label.
+{
+	const units = segmentPage(fromReport([
+		[82, 530, 201, 212, 10.9, "QCNIPI+SFRM1095", "Corollary 7.1 (ESD limits for fullerene sequences). Let (GN ) be a fullerene sequence with", false],
+		[82, 128, 188, 199, 10.9, "HFLVZC+CMMI10", "VN → ∞.", true],
+		[90, 133, 169, 179, 10.9, "AWIXFB+SFTI1095", "(i) If GN", true],
+		[138, 483, 168, 184, 10.9, "AWIXFB+SFTI1095", "BS−−→ (L, o) with L ∈ H, then νGN → νL weakly, and for every fixed k ≥ 0", true],
+		[144, 149, 151, 160, 10.9, "HDMEXU+CMR10", "1", true],
+		[139, 153, 135, 145, 10.9, "HFLVZC+CMMI10", "VN", true],
+		[157, 221, 140, 155, 10.9, "HDMEXU+CMR10", "tr(AkGN ) −→", true],
+		[240, 474, 142, 155, 10.9, "AWIXFB+SFTI1095", "xk dνL(x) = #{closed k-walks at a vertex of L}.", true],
+		[107, 415, 117, 127, 10.9, "AWIXFB+SFTI1095", "Moreover the integrated densities of states converge pointwise [1].", true],
+	]), VIEW).sentence;
+	const got = JSON.stringify(units.map((u) => [u.kind, u.text.slice(0, 30)]));
+	const item = units.find((u) => u.text.startsWith("(i)"));
+	assert.ok(item && item.kind === "text" && item.text.trim().endsWith("k ≥ 0"), `the item stops before the formula: ${got}`);
+	assert.ok(units.some((u) => u.kind === "display" && u.text.includes("closed k-walks")), `the formula is a display: ${got}`);
+}
+
 // --- a run-in numbered paragraph is not a hanging list item ----------------------------
 
 // "3. Gibbs measures with spectral potentials. In Section 5 we replace the

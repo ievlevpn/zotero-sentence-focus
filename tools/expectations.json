@@ -235,6 +235,13 @@
     "kind": "text",
     "lacks": "Preliminaries"
    }
+  ],
+  "11": [
+   {
+    "has": "εn−i",
+    "kind": "display",
+    "lacks": "such that"
+   }
   ]
  },
  "1706.03762v7.pdf": {
@@ -511,6 +518,13 @@
    {
     "has": "ρinj √V as the extremal rate",
     "kind": "text"
+   }
+  ],
+  "22": [
+   {
+    "has": "closed k-walks at a vertex",
+    "kind": "display",
+    "lacks": "weakly"
    }
   ]
  }

@@ -2358,9 +2358,12 @@ function joinContinuations(blocks, typicalGap) {
 			&& LIST_LABEL_RE.test(head.text)
 			// (a line already read as prose is no display, however near the
 			// middle its end happens to leave it)
-			&& (next.flow || !isCentred(next))
+			// (a formula may be centred as a whole while its first line is no
+			// more than the numerator of a fraction at its left end — or the
+			// other way about, when a number at the margin widens the whole)
+			&& (next.flow || !(isCentred(next) || (b.kind === "display" && isCentred({ col: next.col, rect: b.rect }))))
 			// (nor is a numbered line, which is a display wherever it stands)
-			&& next.eqNumFrom < 0 && next.eqNumTo < 0
+			&& b.lines.every((l) => l.eqNumFrom < 0 && l.eqNumTo < 0)
 			&& next.rect[3] < tail.rect[1]
 			&& next.rect[0] > head.rect[0] + 0.5 * next.size);
 		// The tail of a list item is short and full of symbols and is easily
