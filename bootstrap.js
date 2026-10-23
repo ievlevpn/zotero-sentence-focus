@@ -78,6 +78,9 @@ function clickOpens(e) {
 // "ABCDEF+CMMI10", so these are substring tests, not exact ones. The bare
 // /math/ catches the whole modern OpenType family at once (LatinModernMath,
 // NewCMMath, XITSMath, TeXGyrePagellaMath, CambriaMath, FiraMath, ...).
+// The TeX symbol fonts, whose radical hangs from a raised baseline (as the
+// bigger ones in the extension fonts do).
+const SYMBOL_FONT_RE = /(?:cm|lm|[rt]?tx|px|mt2?|ntx|npx|newtx|newpx)sy[a-z]*\d*$/i;
 const MATH_FONT_RE = /cm(?:mi|sy|ex)|ms[ab]m|eu[fs]m|rsfs|bbold|stmary|wasy|[rt]tx(?:mi|sy|ex)|px(?:mi|sy)|mt2?(?:mi|sy|ex)|math/i;
 
 // Symbol blocks that mean "formula" whatever font they came in.
@@ -209,17 +212,30 @@ function materialize(raw) {
 		// bad transform would otherwise size the column histogram by its
 		// coordinate, or throw out of it.
 		if (!rect || rect.length < 4 || !rect.every(Number.isFinite)) continue;
-		const irect = ch.inlineRect || rect;
+		let irect = ch.inlineRect || rect;
 		const cp = c.codePointAt(0);
+		const font = ch.fontName || "";
+		const facts = fontFacts(font);
+		// A TeX symbol font's radical hangs below its baseline, and TeX raises
+		// that baseline until the top of the sign meets the bar over the
+		// radicand — by most of an em. The box is drawn from the raised
+		// baseline, so `√T` came back as a `√` floating into the line above,
+		// which Zotero's layout took for a line of its own and ended the
+		// paragraph there. The box is put where the ink is.
+		let box = rect;
+		if (c === "√" && (SYMBOL_FONT_RE.test(font) || facts.extension) && typeof ch.baseline === "number" && !ch.rotation) {
+			const size = ch.fontSize || rect[3] - rect[1] || 10;
+			box = [rect[0], ch.baseline - 0.96 * size, rect[2], ch.baseline + 0.04 * size];
+			irect = [irect[0], box[1], irect[2], box[3]];
+		}
+		const radical = box !== rect;
 		if (/\p{L}/u.test(c)) {
 			letters++;
 			if (GREEK(cp)) greek++;
 		}
-		const font = ch.fontName || "";
-		const facts = fontFacts(font);
 		out.push({
 			c,
-			rect: [rect[0], rect[1], rect[2], rect[3]],
+			rect: [box[0], box[1], box[2], box[3]],
 			irect: [irect[0], irect[1], irect[2], irect[3]],
 			size: Math.abs(ch.fontSize || (rect[3] - rect[1])) || 10,
 			font,
@@ -233,6 +249,7 @@ function materialize(raw) {
 			lineEnd: !!ch.lineBreakAfter,
 			paraEnd: !!ch.paragraphBreakAfter,
 			skip: !!ch.ignorable,
+			radical,
 			math: false,
 			marker: false,
 		});
@@ -295,6 +312,11 @@ function charsToLines(chars) {
 				box = [Math.min(box[0], next[0]), Math.min(box[1], next[1]), Math.max(box[2], next[2]), Math.max(box[3], next[3])];
 			}
 		} else {
+			// Zotero's paragraph analysis saw the raised radical as a line of its
+			// own and ended the paragraph before it as well. No paragraph opens
+			// with a `√`: "Is it ≍ √V" wrapped at the `≍`, which maps to no
+			// character, left the next line looking indented as well.
+			if (prev && frag[0] === frag[1] && chars[frag[0]].radical) chars[prev[1]].paraEnd = false;
 			merged.push(frag);
 			box = rawBBox(chars, frag[0], frag[1]);
 		}
@@ -430,7 +452,11 @@ function sameVisualLine(chars, a, b, boxA) {
 	}
 	// A small step back is allowed: TeX sometimes sets a script by moving left
 	// again. Anything genuinely on its own line fails the band test above.
-	return B[0] >= A[0] - 0.5 * size && B[0] <= A[2] + size;
+	// A glyph that maps to no character at all — the `≍` of "distance ≍ √T"
+	// — leaves a hole wider than that; a wordless piece of formula carrying on
+	// the band at once is the rest of the line, not the next column.
+	const reach = !hasWord(chars, b[0], b[1]) && chars[b[0]].math ? 2.5 * size : size;
+	return B[0] >= A[0] - 0.5 * size && B[0] <= A[2] + reach;
 }
 
 // Zotero measures word spacing within a fragment, so the gap at a cut it made
@@ -2673,7 +2699,8 @@ function rectsForChars(chars, idx) {
 			for (let j = run.last + 1; j < i && !ended; j++) if (chars[j].lineEnd) ended = true;
 			// ...and a step to another band is a new line whatever the flags
 			// say: the bottom of one column to the top of the next.
-			const step = Math.abs(ch.baseline - prev.baseline);
+			// A hanging glyph's baseline is wherever TeX hung it from, not the line's.
+			const step = hangsBelowBaseline(ch) || hangsBelowBaseline(prev) ? 0 : Math.abs(ch.baseline - prev.baseline);
 			const broke = ended || i <= run.last || !skipped || ch.rot !== prev.rot
 				|| (ch.rot === 0 && step > 0.6 * Math.max(prev.size, ch.size, 4))
 				// A gulf between cells breaks a line; less does not. A glyph

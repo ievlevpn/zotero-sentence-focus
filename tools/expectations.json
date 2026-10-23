@@ -434,7 +434,7 @@
  "1303.5113.pdf": {
   "5": [
    {
-    "has": "∂th = ∂x2h",
+    "has": "∂th = ∂2xh",
     "kind": "display",
     "lacks": "KPZ-type"
    }
@@ -493,6 +493,24 @@
    {
     "has": "Total savings",
     "kind": "display"
+   }
+  ]
+ },
+ "w_pentagon.pdf": {
+  "20": [
+   {
+    "has": "distance √T , uniformly",
+    "kind": "text"
+   }
+  ],
+  "24": [
+   {
+    "has": "Is it √V , as for Goldberg",
+    "kind": "text"
+   },
+   {
+    "has": "ρinj √V as the extremal rate",
+    "kind": "text"
    }
   ]
  }

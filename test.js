@@ -2560,6 +2560,37 @@ function fromReport(rows, opts = {}) {
 	assert.strictEqual(unit.rects.length, 1, `one line, one box: ${JSON.stringify(unit.rects.map((r) => r.map(Math.round)))}`);
 }
 
+// --- a radical hung from a raised baseline ---------------------------------------------
+
+// "pairwise at graph distance ≍ √T, uniformly": TeX raises the radical's
+// baseline by most of an em and hangs the sign from it, so its box floats into
+// the line above. Zotero 11 takes it for a line of its own and puts paragraph
+// breaks after "distance" and after the `√` (the ≍ maps to nothing, leaving a
+// 1.4 em hole). Geometry from the real page.
+{
+	const raw = [];
+	const run = (text, x, base, font, flags = {}) => {
+		for (const c of text) {
+			if (c === " ") { raw[raw.length - 1].spaceAfter = true; x += 3.6; continue; }
+			raw.push({ c, rect: [x, base - 2.1, x + 5, base + 7.5], fontSize: 10.9, fontName: font, baseline: base });
+			x += 5;
+		}
+		Object.assign(raw[raw.length - 1], flags);
+	};
+	const TEXT = "AWIXFB+SFTI1095";
+	run("As the twelve pentagons are", 266, 272.7, TEXT, { spaceAfter: true, lineBreakAfter: true });
+	run("pairwise at graph distance", 82, 258.3, TEXT, { lineBreakAfter: true, paragraphBreakAfter: true });
+	raw.push({ c: "√", rect: [219.3, 265.4, 228.4, 275.0], fontSize: 10.9, fontName: "HFNQPF+CMSY10", baseline: 267.5,
+		lineBreakAfter: true, paragraphBreakAfter: true });
+	run("T, uniformly over pairs.", 228.4, 258.3, TEXT, { paragraphBreakAfter: true });
+	const units = segmentPage(raw, VIEW).sentence;
+	const got = JSON.stringify(units.map((u) => u.text));
+	assert.strictEqual(units.length, 1, `one sentence: ${got}`);
+	assert.ok(units[0].text.includes("distance √T"), `the radical stays in it: ${got}`);
+	const top = Math.max(...units[0].rects.filter((r) => r[1] < 262).map((r) => r[3]));
+	assert.ok(top < 270, `nothing pokes into the line above: ${JSON.stringify(units[0].rects.map((r) => r.map(Math.round)))}`);
+}
+
 // --- a run-in numbered paragraph is not a hanging list item ----------------------------
 
 // "3. Gibbs measures with spectral potentials. In Section 5 we replace the
