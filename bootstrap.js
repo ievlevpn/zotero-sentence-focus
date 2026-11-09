@@ -3087,6 +3087,13 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 			for (const [a, b] of ranges[g]()) {
 				const unit = rangeToUnit(chars, text, map, a, b, block.kind, wholeArea, measure, band);
 				if (!unit) continue;
+				// Asked for when a phrase is being cut out of the unit: where
+				// its words are, and how to draw any run of them. The glyphs
+				// stay with the closure, so this is never cached.
+				if (opts.words) {
+					unit.words = wordRanges(text.slice(a, b)).map(([x, y]) => [a + x, a + y]);
+					unit.cut = (x, y) => rangeToUnit(chars, text, map, x, y, block.kind, false, measure, band);
+				}
 				// Reading order is by region, and regions can share an x range — the
 				// left column above a figure and the left column below it.
 				const region = cols.indexOf(block.lines[0] && block.lines[0].col);
@@ -3215,6 +3222,32 @@ async function computeUnits(session, pageIndex, key) {
 	// Map iterates in insertion order, so the oldest page goes first.
 	while (cache.size > pageLimit()) cache.delete(cache.keys().next().value);
 	return units;
+}
+
+// A page's units read again with their words, for cutting a phrase out of
+// one. The glyphs come back with them, so only the page being trimmed is kept,
+// and only beside the units it was asked for; segmentation is deterministic,
+// so the two lists line up unit for unit.
+async function detailedUnits(session, units) {
+	const kept = session.trimSource;
+	if (kept && kept.units === units) return kept.detailed;
+	const v = viewerOf(session.reader);
+	if (!v) return null;
+	const key = cacheKey(session.pageIndex);
+	const g = sizeOfKey(key);
+	let detailed = null;
+	try {
+		const data = Cu.waiveXrays(await v.pdf.getPageData(Cu.cloneInto({ pageIndex: session.pageIndex }, v.win)));
+		if (data && data.chars) {
+			const all = segmentPage(data.chars, data.viewBox || [0, 0, 612, 792], { mergeDisplay: !!pref("mergeDisplay"), only: g, words: true });
+			detailed = all[g] || null;
+		}
+	} catch (e) {
+		Zotero.debug(`Sentence Focus: page ${session.pageIndex + 1} unreadable - ` + e);
+	}
+	if (!detailed || detailed.length !== units.length) return null;
+	session.trimSource = { units, detailed };
+	return detailed;
 }
 
 // --- painting --------------------------------------------------------------
@@ -3401,16 +3434,78 @@ function currentUnit(session) {
 // on its own page or section: an annotation cannot cross one.
 function spanned(units, session, where) {
 	const unit = units && units[session.unitIndex];
-	const span = session.span;
-	if (!unit || !span || span.where !== where || span.end <= span.start
-		|| session.unitIndex < span.start || session.unitIndex > span.end) return unit;
-	const part = units.slice(span.start, span.end + 1);
+	if (!unit) return unit;
+	const [start, end] = spanBounds(session, where);
+	// A phrase cut out of the run (see trimRun) stands in for all of it.
+	const trim = session.trim;
+	if (trim && trim.units === units && trim.start === start && trim.end === end) return trim.unit;
+	if (end <= start) return unit;
+	return joinUnits(units.slice(start, end + 1), session.kind === "dom") || unit;
+}
+
+// The first and last unit the ruler covers: the span, or the one it is on.
+function spanBounds(session, where) {
+	const span = session.span, at = session.unitIndex;
+	if (!span || span.where !== where || span.end <= span.start || at < span.start || at > span.end) return [at, at];
+	return [span.start, span.end];
+}
+
+// Several units in a row, read and marked as one.
+function joinUnits(part, dom) {
 	const first = part[0], last = part[part.length - 1];
-	if (!first || !last) return unit;
+	if (!first || !last) return null;
+	if (part.length === 1) return first;
 	const text = part.map((u) => u.text).join(" ");
-	return session.kind === "dom"
-		? { ...first, text, endNode: last.endNode, endOffset: last.endOffset }
+	return dom
+		? { ...first, text, endNode: last.endNode, endOffset: last.endOffset, b: last.b }
 		: { ...first, text, rects: part.flatMap((u) => u.rects) };
+}
+
+// What is left of a run of words once `cutStart` have been taken off the
+// front and `cutEnd` off the back, gathered back into the units they came
+// from: { k, a, b } for each unit still in it. Null once nothing would be.
+function keptWords(words, cutStart, cutEnd) {
+	const kept = words.slice(cutStart, words.length - cutEnd);
+	if (!kept.length || cutStart < 0 || cutEnd < 0) return null;
+	const pieces = [];
+	for (const w of kept) {
+		const last = pieces[pieces.length - 1];
+		if (last && last.k === w.k) last.b = w.b;
+		else pieces.push({ k: w.k, a: w.a, b: w.b });
+	}
+	return pieces;
+}
+
+// The words of a unit, as offsets into the text it was cut from. A PDF unit
+// carries them only when its page was read for them (see detailedUnits).
+function unitWords(unit, dom) {
+	if (!unit) return [];
+	if (!dom) return unit.words || [];
+	if (!unit.block) return [];
+	return wordRanges(unit.block.text.slice(unit.a, unit.b)).map(([x, y]) => [unit.a + x, unit.a + y]);
+}
+
+function cutUnit(unit, a, b, dom) {
+	if (dom) return unit.block ? domPiece(unit.block, a, b) : null;
+	return unit.cut ? unit.cut(a, b) : null;
+}
+
+// Cut a phrase out of the run of units the ruler covers, taking whole words
+// off either end; `cut` is how many from each. Nothing cut, the run is itself
+// again. Returns false when there is not that much to cut.
+function trimRun(session, units, detailed, where, cut) {
+	const dom = session.kind === "dom";
+	const [start, end] = spanBounds(session, where);
+	if (!cut.start && !cut.end) { session.trim = null; return true; }
+	const words = [];
+	for (let k = start; k <= end; k++) for (const [a, b] of unitWords(detailed[k], dom)) words.push({ k, a, b });
+	const kept = keptWords(words, cut.start, cut.end);
+	if (!kept) return false;
+	const pieces = kept.map((p) => cutUnit(detailed[p.k], p.a, p.b, dom)).filter(Boolean);
+	const unit = joinUnits(pieces, dom);
+	if (!unit) return false;
+	session.trim = { units, start, end, cutStart: cut.start, cutEnd: cut.end, unit };
+	return true;
 }
 
 // Zotero's rule for ⌘← and ⌘→: grow away from where it started, and going the
@@ -3460,11 +3555,25 @@ function lookOf(session) {
 			strength: PREVIEW_STRENGTH,
 		};
 	}
+	return settingsLook();
+}
+
+function settingsLook() {
 	return {
 		style: styleName(),
 		color: solidColor(String(pref("color"))),
 		strength: Math.min(0.95, Math.max(0.05, (Number(pref("opacity")) || DEFAULTS.opacity) / 100)),
 	};
+}
+
+// Every look the ruler is drawn in, underneath first. A preview is a mark on
+// the unit and says nothing about the rest of the page, so a veil the reader
+// chose stays down under it: lifting it for as long as the panel is open
+// makes the whole page flash on and off around every annotation.
+function looksOf(session) {
+	const look = lookOf(session);
+	if (look.style === "dim" || !(session && session.preview) || styleName() !== "dim") return [look];
+	return [settingsLook(), look];
 }
 
 let idSeq = 0;
@@ -3527,11 +3636,6 @@ function paint(session, scroll, insist) {
 	if (!pv) return;
 	injectCSS(v.doc);
 
-	const { style, strength, color } = lookOf(session);
-	// A rule two pixels tall carries far less colour than a wash over a whole
-	// line, so the same setting has to push it harder to read as the same
-	// weight on the page.
-	const alpha = style === "underline" ? Math.min(0.95, strength * 1.7) : strength;
 	const aspect = pageAspect(pv);
 	const raw = unit.rects.map((r) => toUserBox(r, pv.viewport, aspect));
 	// The page matrix is a rotation and a uniform scale, so one box's diagonal
@@ -3543,22 +3647,29 @@ function paint(session, scroll, insist) {
 	const scale = Math.max(0, Number(pref("padding")) || 0) / 100;
 	const boxes = padBoxes(raw, em, unit.kind === "display", scale);
 
-	const svg = v.doc.createElementNS(SVG_NS, "svg");
-	svg.setAttribute("class", "sfz-veil" + (style === "dim" ? "" : " sfz-blend"));
-	svg.setAttribute("viewBox", `0 0 100 ${100 * aspect}`);
-	svg.setAttribute("preserveAspectRatio", "none");
-	svg.style.opacity = String(alpha);
-	if (style !== "dim") svg.style.setProperty("--sfz-blend", blendFor(v, pv));
-	drawHighlight(v.doc, svg, style, boxes, color, 100 * aspect);
+	for (const { style, strength, color } of looksOf(session)) {
+		// A rule two pixels tall carries far less colour than a wash over a
+		// whole line, so the same setting has to push it harder to read as the
+		// same weight on the page.
+		const alpha = style === "underline" ? Math.min(0.95, strength * 1.7) : strength;
+		const svg = v.doc.createElementNS(SVG_NS, "svg");
+		svg.setAttribute("class", "sfz-veil" + (style === "dim" ? "" : " sfz-blend"));
+		svg.setAttribute("viewBox", `0 0 100 ${100 * aspect}`);
+		svg.setAttribute("preserveAspectRatio", "none");
+		svg.style.opacity = String(alpha);
+		if (style !== "dim") svg.style.setProperty("--sfz-blend", blendFor(v, pv));
+		drawHighlight(v.doc, svg, style, boxes, color, 100 * aspect);
 
-	// The wrapper exists only so one remove() clears the whole highlight; it
-	// has no box of its own, so the svg still measures against the page div.
-	const layer = v.doc.createElement("div");
-	layer.className = "sfz-layer";
-	layer.append(svg);
-	pv.div.append(layer);
-	session.painted.push(layer);
-	if (style === "dim") dimAround(session, v, pv, alpha);
+		// The wrapper exists only so one remove() clears the whole highlight;
+		// it has no box of its own, so the svg still measures against the page
+		// div.
+		const layer = v.doc.createElement("div");
+		layer.className = "sfz-layer";
+		layer.append(svg);
+		pv.div.append(layer);
+		session.painted.push(layer);
+		if (style === "dim") dimAround(session, v, pv, alpha);
+	}
 
 	if (scroll) ensureVisible(v, pv, unit, insist);
 	noteSpot(session);
@@ -4156,12 +4267,20 @@ function collectBlocks(root, win) {
 function blockUnits(block, granularity) {
 	// A heading is read whole: "Chapter One. The Beginning" is one title.
 	const g = block.heading && granularity === "sentence" ? "paragraph" : granularity;
-	return textUnits(block.text, block.math, g).map(([a, b]) => ({
+	return textUnits(block.text, block.math, g).map(([a, b]) => domPiece(block, a, b))
+		.filter((u) => u.startNode && u.endNode);
+}
+
+// A stretch of a block's text as a unit. The block and the offsets stay on it,
+// so a phrase can be cut out of it a word at a time.
+function domPiece(block, a, b) {
+	return {
 		kind: "text",
 		text: block.text.slice(a, b),
 		startNode: block.nodes[a], startOffset: block.offsets[a],
 		endNode: block.nodes[b - 1], endOffset: block.offsets[b - 1] + 1,
-	})).filter((u) => u.startNode && u.endNode);
+		block, a, b,
+	};
 }
 
 // The EPUB or snapshot view of a reader, or null. Asked of the reader's type
@@ -4251,6 +4370,7 @@ function domLines(dv, blocks) {
 			} else {
 				line.endNode = word.endNode;
 				line.endOffset = word.endOffset;
+				line.b = word.b;
 				line.text += " " + word.text;
 			}
 			last = rect;
@@ -4302,7 +4422,10 @@ function domUnitsAt(session, section) {
 // colour and decoration can be styled there, so the shaped styles — rounded,
 // soft, marker — come out as the plain tint.
 function highlightCSS(session) {
-	const { style, strength, color } = lookOf(session);
+	return looksOf(session).map(lookCSS).join("");
+}
+
+function lookCSS({ style, strength, color }) {
 	const hex = color.slice(1);
 	const [r, g, b] = [0, 2, 4].map((k) => parseInt(hex.slice(k, k + 2), 16));
 	const colour = (a) => `rgb(${r} ${g} ${b} / ${a.toFixed(3)})`;
@@ -4396,16 +4519,18 @@ function paintDom(session, scroll, insist) {
 		return;
 	}
 	setDomStyle(dv, highlightCSS(session));
-	if (lookOf(session).style === "dim") {
-		const root = dv.doc.body;
-		const before = dv.doc.createRange(), after = dv.doc.createRange();
-		before.setStart(root, 0);
-		before.setEnd(unit.startNode, unit.startOffset);
-		after.setStart(unit.endNode, unit.endOffset);
-		after.setEnd(root, root.childNodes.length);
-		registry.set("sfz-dim", new dv.win.Highlight(before, after));
-	} else {
-		registry.set("sfz-unit", new dv.win.Highlight(range));
+	for (const { style } of looksOf(session)) {
+		if (style === "dim") {
+			const root = dv.doc.body;
+			const before = dv.doc.createRange(), after = dv.doc.createRange();
+			before.setStart(root, 0);
+			before.setEnd(unit.startNode, unit.startOffset);
+			after.setStart(unit.endNode, unit.endOffset);
+			after.setEnd(root, root.childNodes.length);
+			registry.set("sfz-dim", new dv.win.Highlight(before, after));
+		} else {
+			registry.set("sfz-unit", new dv.win.Highlight(range));
+		}
 	}
 }
 
@@ -4982,6 +5107,8 @@ function pdfAnnotationTarget(session, unitOnly) {
 	return {
 		from: "unit",
 		built: true,          // made here, so it has to be carried into the reader
+		covers: (pos) => !!pos && pos.pageIndex === position.pageIndex
+			&& rectsOverlap(Array.from(pos.rects || [], (r) => Array.from(r)), position.rects),
 		text: unit.text,
 		rect: pv ? frameRect(v.win, unitClientRect(pv, unit)) : null,
 		make: (type, color) => {
@@ -5044,12 +5171,67 @@ function domAnnotationTarget(session, unitOnly) {
 	return {
 		from, text,
 		rect: rangeClientRect(dv.win, range),
+		covers: (selector) => {
+			if (!selector || !dv.view.toDisplayedRange) return false;
+			const r = dv.view.toDisplayedRange(cloneForReader(session.reader, selector));
+			// Each starts before the other ends.
+			return !!r && r.compareBoundaryPoints(range.END_TO_START, range) < 0
+				&& range.compareBoundaryPoints(range.END_TO_START, r) < 0;
+		},
 		make: (type, color) => {
 			const annotation = dv.view.getAnnotationFromRange(range, type, color);
 			if (!annotation) return null;
 			return dv.view._finalizeAnnotation ? dv.view._finalizeAnnotation(annotation) : annotation;
 		},
 	};
+}
+
+// Whether two marks lie on the same words: their boxes share at least a third
+// of the smaller one's area. A mark on the next sentence shares a line with
+// this one, and lines above and below touch it, but neither covers it.
+function rectsOverlap(p, q) {
+	const area = (rs) => rs.reduce((n, r) => n + Math.max(0, r[2] - r[0]) * Math.max(0, r[3] - r[1]), 0);
+	let shared = 0;
+	for (const r of p) {
+		for (const t of q) {
+			const w = Math.min(r[2], t[2]) - Math.max(r[0], t[0]);
+			const h = Math.min(r[3], t[3]) - Math.max(r[1], t[1]);
+			if (w > 0 && h > 0) shared += w * h;
+		}
+	}
+	const least = Math.min(area(p), area(q));
+	return least > 0 && shared >= least / 3;
+}
+
+// The highlights and underlines already on what the ruler is on — most often
+// one a stray Enter has just made — so they can be taken off again from the
+// panel, as Zotero's read-aloud popup lets them be. A selection has its own
+// ways of reaching what is under it.
+const MARK_TYPES = new Set(["highlight", "underline"]);
+function marksUnder(session, target) {
+	if (!target || target.from !== "unit" || !target.covers || isReadOnly(session.reader)) return [];
+	let all = null;
+	try { all = Cu.waiveXrays(annotationManager(session.reader))._annotations; } catch (e) { return []; }
+	const out = [];
+	for (const a of all || []) {
+		try {
+			if (!MARK_TYPES.has(a.type) || a.readOnly || a.isExternal) continue;
+			if (target.covers(a.position)) out.push(String(a.id));
+		} catch (e) { /* a mark the view cannot place */ }
+	}
+	return out;
+}
+
+// Through the reader rather than its annotation manager, so the popups and
+// the selection let go of what is gone — and so taking off more than one asks
+// first, as Zotero does everywhere else.
+function deleteMarks(reader, ids) {
+	try {
+		return Number(reader._internalReader.deleteAnnotations(cloneForReader(reader, ids))) || 0;
+	} catch (e) {
+		Zotero.debug("Sentence Focus: could not delete annotations - " + e);
+		return 0;
+	}
 }
 
 function annotationManager(reader) {
@@ -5163,6 +5345,8 @@ const ANNOTATE_CSS = `
 .sfz-act{flex:1;font:inherit;padding:5px 9px;border-radius:8px;cursor:pointer;white-space:nowrap;
  border:1px solid color-mix(in srgb,CanvasText 22%,Canvas);background:transparent;color:inherit}
 .sfz-act.sfz-primary{background:Highlight;border-color:Highlight;color:HighlightText;font-weight:600}
+.sfz-act.sfz-delete{flex:0 1 auto;color:color-mix(in srgb,#d64545 85%,CanvasText)}
+.sfz-act[hidden]{display:none}
 .sfz-pop button:focus-visible,.sfz-dot:focus-visible{outline:2px solid Highlight;outline-offset:2px}
 .sfz-pop-hint{margin:0;color:GrayText;font-size:10.5px;line-height:1.6}
 .sfz-pop-hint kbd{font:10.5px ui-monospace,monospace;padding:0 3px;border-radius:3px;
@@ -5290,6 +5474,7 @@ function openAnnotate(session) {
 		const span = session.span;
 		const n = span ? span.end - span.start + 1 : 1;
 		what.textContent = !target ? "" : target.from === "selection" ? "selection"
+			: session.trim ? "phrase"
 			: n > 1 ? `${n} ${granularity()}s` : granularity();
 		quote.textContent = target && target.text ? `“${target.text.replace(/\s+/g, " ").slice(0, 160)}”` : "";
 		quote.hidden = !quote.textContent;
@@ -5376,23 +5561,54 @@ function openAnnotate(session) {
 	const noteBtn = make("button", "sfz-act", "Add note…");
 	noteBtn.title = "Make the annotation and open Zotero's popup for a comment and tags (n).";
 	noteBtn.addEventListener("click", () => apply(true));
-	acts.append(primary, noteBtn);
+	// Offered only when there is something under the ruler to take off.
+	const deleteBtn = make("button", "sfz-act sfz-delete", "Delete");
+	let marks = [];
+	const removeMarks = () => {
+		if (blocked || !marks.length) return;
+		const gone = deleteMarks(session.reader, marks);
+		// Not read back: Zotero may not have let go of them yet.
+		if (gone) { marks = []; deleteBtn.hidden = true; showHint(); }
+		// Zotero's confirmation takes the focus with it.
+		try { ([...dots.children].find((d) => d.tabIndex === 0) || panel).focus({ preventScroll: true }); } catch (e) { /* closed */ }
+	};
+	deleteBtn.addEventListener("click", removeMarks);
+	acts.append(primary, noteBtn, deleteBtn);
 	if (!blocked) { panel.append(acts); panel.append(note); }
 
 	const hint = make("p", "sfz-pop-hint");
-	if (blocked) hint.append(make("kbd", null, "Esc"), doc.createTextNode(" closes this"));
-	else hint.append(
-		make("kbd", null, "1"), doc.createTextNode("–"), make("kbd", null, "8"),
-		doc.createTextNode(" colour · "),
-		make("kbd", null, "h"), doc.createTextNode("/"), make("kbd", null, "u"),
-		doc.createTextNode(" kind · "),
-		make("kbd", null, "↵"), doc.createTextNode(" mark · "),
-		make("kbd", null, "n"), doc.createTextNode(" note · "),
-		make("kbd", null, "["), doc.createTextNode(" "), make("kbd", null, "]"), doc.createTextNode(" move · "),
-		make("kbd", null, onMac() ? "⌘[" : "Ctrl+["), doc.createTextNode(" "), make("kbd", null, onMac() ? "⌘]" : "Ctrl+]"),
-		doc.createTextNode(" extend"),
-	);
+	const mod = onMac() ? "⌘" : "Ctrl+";
+	const showHint = () => {
+		hint.replaceChildren();
+		if (blocked) { hint.append(make("kbd", null, "Esc"), doc.createTextNode(" closes this")); return; }
+		hint.append(
+			make("kbd", null, "1"), doc.createTextNode("–"), make("kbd", null, "8"),
+			doc.createTextNode(" colour · "),
+			make("kbd", null, "h"), doc.createTextNode("/"), make("kbd", null, "u"),
+			doc.createTextNode(" kind · "),
+			make("kbd", null, "↵"), doc.createTextNode(" mark · "),
+			make("kbd", null, "n"), doc.createTextNode(" note · "),
+		);
+		if (marks.length) hint.append(make("kbd", null, "⌫"), doc.createTextNode(" delete · "));
+		hint.append(
+			make("kbd", null, "["), doc.createTextNode(" "), make("kbd", null, "]"), doc.createTextNode(" move · "),
+			make("kbd", null, mod + "["), doc.createTextNode(" "), make("kbd", null, mod + "]"),
+			doc.createTextNode(" extend · "),
+			make("kbd", null, mod + (onMac() ? "⌥[" : "Alt+[")), doc.createTextNode(" "),
+			make("kbd", null, mod + (onMac() ? "⌥]" : "Alt+]")),
+			doc.createTextNode(" trim a word (⇧ back)"),
+		);
+	};
+	const showMarks = () => {
+		marks = blocked ? [] : marksUnder(session, target);
+		deleteBtn.hidden = !marks.length;
+		deleteBtn.title = marks.length > 1
+			? `Delete the ${marks.length} annotations already here (⌫).`
+			: "Delete the annotation already here (⌫).";
+		showHint();
+	};
 	panel.append(hint);
+	showMarks();
 	showType();
 
 	doc.body.append(panel);
@@ -5407,24 +5623,65 @@ function openAnnotate(session) {
 		if (!next) return;
 		target = next;
 		showTarget();
+		showMarks();
 		placeAnnotate(doc, panel, target.rect);
 		preview();
 	};
 	const stepTarget = (delta) => enqueue(session, async () => {
 		session.span = null;
+		session.trim = null;
 		await (session.kind === "dom" ? moveDom : move)(session, delta);
 		if (annotatePanel && annotatePanel.el === panel) retarget();
 	});
-	const growTarget = (delta) => enqueue(session, () => {
-		const where = session.kind === "dom" ? session.section : session.pageIndex;
-		const units = session.kind === "dom" ? session.units.get(`${session.section}:${granularity()}`)
+	const here = () => {
+		const dom = session.kind === "dom";
+		const where = dom ? session.section : session.pageIndex;
+		const units = dom ? session.units.get(`${session.section}:${granularity()}`)
 			: cacheOf(session).get(cacheKey(session.pageIndex));
-		if (!units || !units[session.unitIndex]) return;
+		return units && units[session.unitIndex] ? { where, units } : null;
+	};
+	// What has been cut off each end of the run, while the run is the same.
+	const cutNow = (where, units) => {
+		const t = session.trim;
+		const [start, end] = spanBounds(session, where);
+		return t && t.units === units && t.start === start && t.end === end
+			? { start: t.cutStart, end: t.cutEnd } : { start: 0, end: 0 };
+	};
+	const growTarget = (delta) => enqueue(session, async () => {
+		const now = here();
+		if (!now) return;
+		const { where, units } = now;
 		const at = session.unitIndex;
 		const span = session.span && session.span.where === where ? session.span : { where, base: at, start: at, end: at };
 		const grown = growSpan(span, delta, units.length);
 		if (!grown) return;
+		// A phrase grows from the end that moved; the other keeps its cut.
+		const cut = cutNow(where, units);
 		session.span = grown;
+		session.trim = null;
+		if (grown.start !== span.start) cut.start = 0;
+		if (grown.end !== span.end) cut.end = 0;
+		if (cut.start || cut.end) {
+			const detailed = session.kind === "dom" ? units : await detailedUnits(session, units);
+			if (detailed) trimRun(session, units, detailed, where, cut);
+		}
+		if (!annotatePanel || annotatePanel.el !== panel) return;
+		repaint();
+		retarget();
+	});
+	// A word off the start (-1) or the end (+1) of what is to be marked, so a
+	// phrase can be cut out of a sentence; `back` gives the last one back.
+	const trimTarget = (side, back) => enqueue(session, async () => {
+		const now = here();
+		if (!now) return;
+		const { where, units } = now;
+		const cut = cutNow(where, units);
+		const key = side < 0 ? "start" : "end";
+		if (back && !cut[key]) return;
+		cut[key] += back ? -1 : 1;
+		const detailed = session.kind === "dom" ? units : await detailedUnits(session, units);
+		if (!detailed || !annotatePanel || annotatePanel.el !== panel) return;
+		if (!trimRun(session, units, detailed, where, cut)) return;
 		repaint();
 		retarget();
 	});
@@ -5439,13 +5696,22 @@ function openAnnotate(session) {
 		// A panel that says why it can do nothing answers to nothing else.
 		if (blocked) { if (key === "Enter") { stop(); closeAnnotate(); } return; }
 		const delta = bracket(e);
-		if (delta && !e.altKey && !e.shiftKey) {
+		if (delta) {
 			const mac = onMac();
 			const mod = mac ? e.metaKey : e.ctrlKey, other = mac ? e.ctrlKey : e.metaKey;
 			if (other) return;
+			if (e.altKey) {
+				if (!mod) return;
+				stop(); trimTarget(delta, e.shiftKey); return;
+			}
+			if (e.shiftKey) return;
 			stop();
 			if (mod) growTarget(delta); else stepTarget(delta);
 			return;
+		}
+		if ((key === "Backspace" || key === "Delete") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+			if (!marks.length) return;
+			stop(); removeMarks(); return;
 		}
 		if (key === "Enter" || key === " ") {
 			// Space and Enter on one of the two buttons are that button's own
@@ -5500,14 +5766,17 @@ function openAnnotate(session) {
 			// it was.
 			const span = session.span;
 			const previewed = !!session.preview;
+			const trimmed = !!session.trim;
 			session.preview = null;
+			session.trim = null;
+			session.trimSource = null;
 			if (span) {
 				session.span = null;
 				if (span.where === (session.kind === "dom" ? session.section : session.pageIndex)) {
 					session.unitIndex = state.made ? span.end : span.base;
 				}
 			}
-			if (span || previewed) {
+			if (span || previewed || trimmed) {
 				try { repaint(); } catch (e) { /* the tab is closing */ }
 			}
 		},
@@ -6574,7 +6843,7 @@ if (typeof module !== "undefined") {
 		annotateColor, annotateType, placeAnnotate, copyKeyPressed, CLICK_MODES,
 		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 		READ_ALOUD_KEYS, readAloudKeyPressed,
-		growSpan, spanned,
+		growSpan, spanned, looksOf, keptWords, rectsOverlap, trimRun,
 		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, awayText, panelLetter, lookOf,
 		SPOT_LIMIT, SPOT_BYTES, readAloudUnit, placeKey,
 	};

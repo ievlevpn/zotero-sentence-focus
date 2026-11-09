@@ -33,7 +33,7 @@ const {
 	READ_ALOUD_KEYS, readAloudKeyPressed,
 	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
 	readAloudUnit, awayText, panelLetter, lookOf, placeKey,
-	growSpan, spanned,
+	growSpan, spanned, looksOf, keptWords, rectsOverlap, trimRun,
 } = require("./bootstrap.js");
 
 const TEXT_FONT = "NimbusRomNo9L-Regu";
@@ -3341,6 +3341,79 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 	];
 	const run = spanned(dom, { kind: "dom", unitIndex: 0, span: { where: 0, base: 0, start: 0, end: 1 } }, 0);
 	assert.deepStrictEqual([run.startNode, run.startOffset, run.endNode, run.endOffset], ["n1", 0, "n2", 2]);
+}
+
+// A ruler that dims the page keeps the veil down while the panel previews the
+// mark: the preview is drawn over the unit, not instead of the dimming.
+{
+	const prefs = { "extensions.zotero.sentenceFocus.style": "dim" };
+	global.Zotero = { Prefs: { get: (key) => prefs[key] } };
+	try {
+		const preview = { color: "#ff6666", type: "highlight" };
+		assert.deepStrictEqual(looksOf({ preview }).map((l) => l.style), ["dim", "tint"]);
+		assert.deepStrictEqual(looksOf({}).map((l) => l.style), ["dim"], "no preview, only the veil");
+		prefs["extensions.zotero.sentenceFocus.style"] = "rounded";
+		assert.deepStrictEqual(looksOf({ preview }).map((l) => l.style), ["tint"], "a mark style gives way to the preview");
+	} finally {
+		delete global.Zotero;
+	}
+}
+
+// Trimming takes whole words off either end of the run, and always leaves one.
+{
+	const words = [{ k: 0, a: 0, b: 3 }, { k: 0, a: 4, b: 7 }, { k: 1, a: 0, b: 2 }, { k: 1, a: 3, b: 5 }];
+	assert.deepStrictEqual(keptWords(words, 0, 0), [{ k: 0, a: 0, b: 7 }, { k: 1, a: 0, b: 5 }]);
+	assert.deepStrictEqual(keptWords(words, 1, 1), [{ k: 0, a: 4, b: 7 }, { k: 1, a: 0, b: 2 }]);
+	assert.deepStrictEqual(keptWords(words, 3, 0), [{ k: 1, a: 3, b: 5 }]);
+	assert.strictEqual(keptWords(words, 2, 2), null, "nothing left");
+}
+
+// A mark covers the unit when they share a good part of their area; one on the
+// next sentence shares its line but not its words.
+{
+	const unit = [[72, 700, 540, 712], [72, 686, 300, 698]];
+	assert.ok(rectsOverlap([[72, 700, 540, 712], [72, 686, 300, 698]], unit), "the same sentence");
+	assert.ok(rectsOverlap([[200, 700, 400, 712]], unit), "a phrase inside it");
+	assert.ok(!rectsOverlap([[302, 686, 540, 698], [72, 672, 200, 684]], unit), "the next sentence");
+	assert.ok(!rectsOverlap([], unit));
+}
+
+// Cutting a phrase out of a sentence, in a book and on a PDF page.
+{
+	const el = (name, ...children) => {
+		const node = { nodeType: 1, localName: name, isConnected: false, childNodes: children };
+		children.forEach((c, k) => { c.parentElement = node; c.nextSibling = children[k + 1] || null; });
+		node.firstChild = children[0] || null;
+		return node;
+	};
+	const t = (text) => ({ nodeType: 3, nodeValue: text });
+	const blocks = collectBlocks(el("body", el("p", t("The quick brown fox. It jumps over "), el("em", t("the lazy dog.")))), null);
+	const units = blockUnits(blocks[0], "sentence");
+	const session = { kind: "dom", unitIndex: 1, span: null };
+	assert.ok(trimRun(session, units, units, 0, { start: 1, end: 2 }));
+	assert.strictEqual(spanned(units, session, 0).text, "jumps over the");
+	assert.ok(trimRun(session, units, units, 0, { start: 0, end: 0 }));
+	assert.strictEqual(session.trim, null, "nothing cut is the sentence again");
+	assert.strictEqual(spanned(units, session, 0), units[1]);
+	assert.ok(!trimRun(session, units, units, 0, { start: 3, end: 3 }), "not more than there is");
+	// Across a grown span: the first sentence loses its first word, the
+	// second its last two.
+	const spanSession = { kind: "dom", unitIndex: 0, span: { where: 0, base: 0, start: 0, end: 1 } };
+	assert.ok(trimRun(spanSession, units, units, 0, { start: 1, end: 2 }));
+	const cut = spanned(units, spanSession, 0);
+	assert.strictEqual(cut.text, "quick brown fox. It jumps over the");
+	assert.strictEqual(cut.endNode, units[1].endNode);
+
+	const page = layout(["Alpha beta gamma delta. Epsilon zeta eta."]);
+	const plain = segmentPage(page, VIEW).sentence;
+	const detailed = segmentPage(page, VIEW, { only: "sentence", words: true }).sentence;
+	assert.deepStrictEqual(detailed.map((u) => u.text), plain.map((u) => u.text), "the detailed read lines up");
+	const pdf = { kind: "pdf", unitIndex: 0, span: null };
+	assert.ok(trimRun(pdf, plain, detailed, 0, { start: 1, end: 1 }));
+	const phrase = spanned(plain, pdf, 0);
+	assert.strictEqual(phrase.text, "beta gamma");
+	assert.ok(phrase.rects[0][0] > plain[0].rects[0][0] && phrase.rects[0][2] < plain[0].rects[0][2],
+		"the box is the phrase's, inside the sentence's");
 }
 
 console.log("all tests passed");

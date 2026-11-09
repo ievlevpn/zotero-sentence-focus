@@ -28,7 +28,11 @@ highlight or underline, `Enter` marks it, and `n` marks it and opens Zotero's
 own popup for a comment and tags. `[` and `]` move what is to be marked to the
 previous or next sentence, and `⌘[` / `⌘]` (`Ctrl` elsewhere) stretch it over
 one more sentence back or forward — the same moves Zotero's read-aloud popup
-makes with the arrows.
+makes with the arrows. `⌘⌥[` / `⌘⌥]` (`Ctrl+Alt` elsewhere) take a word off
+the start or the end, to mark a phrase instead of the whole sentence; add `⇧`
+to give a word back. When the sentence already carries a highlight — a stray
+`Enter` — the panel offers **Delete** (`⌫`) to take it off again. With the
+ruler set to dim the page, the dimming stays while the panel previews the mark.
 
 ## Install
 
