@@ -6,8 +6,8 @@ line at a time. It works in PDFs, EPUBs and saved web pages.
 ![A sentence highlighted across two lines of a maths paper](docs/screenshot-pdf.png)
 
 Press `Option+R` (`Alt+R`) to turn the ruler on and off, `]` to step forward,
-`[` to step back, or click a sentence to jump to it
-(clicking can be set to need `⌘`/`Ctrl`, or to do nothing at all). You can also
+`[` to step back — wherever your layout puts them, Option+5/6 on a German Mac
+included — or click a sentence to jump to it (clicking can be set to need `⌘`/`Ctrl`, or to do nothing at all). You can also
 step by word, line or paragraph, and `⌘`/`Ctrl`+`C` copies the sentence you are
 on when nothing is selected. If you have scrolled off somewhere else,
 `Option+J` (`Alt+J`) brings the page back to the ruler without moving it.

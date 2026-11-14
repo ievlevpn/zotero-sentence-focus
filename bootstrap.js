@@ -3984,6 +3984,28 @@ function isTypingTarget(target) {
 	return !!el;
 }
 
+// `[` and `]` by the character typed, not the key's place: a layout that puts
+// them elsewhere — Option-5/6 on a German Mac, AltGr-8/9 on a German PC —
+// still steps, and a key in the `]` place that types `[` steps back. The
+// modifiers that typed the bracket are part of the character, so what comes
+// back says which were held *besides* those. Only a key that types a letter of
+// another alphabet — х and ъ on a Russian layout — is read by its place, as
+// the annotate panel's letters are; ü on a German one is a letter, not a step.
+function bracketStep(e) {
+	const key = e.key || "";
+	const placed = e.code === "BracketRight" ? 1 : e.code === "BracketLeft" ? -1 : 0;
+	const held = { meta: !!e.metaKey, ctrl: !!e.ctrlKey, alt: !!e.altKey, shift: !!e.shiftKey };
+	if (key === "]" || key === "[") {
+		const delta = key === "]" ? 1 : -1;
+		if (placed) return { delta, ...held };
+		// AltGr arrives as Ctrl+Alt on Windows; on a Mac Option is plain Alt.
+		const altGr = !!(e.getModifierState && e.getModifierState("AltGraph"));
+		return { delta, meta: held.meta, ctrl: altGr ? false : held.ctrl, alt: false, shift: false };
+	}
+	const foreign = /^\p{L}$/u.test(key) && !/\p{Script=Latin}/u.test(key);
+	return { delta: foreign ? placed : 0, ...held };
+}
+
 // One keyboard handler for both kinds of session: the step keys, and the key
 // that offers to annotate what the ruler is on. While that popup is open it
 // has the keyboard to itself — `[` and `]` are letters to it, not steps.
@@ -4008,10 +4030,8 @@ function sessionKey(session, e, step) {
 		if (copyCurrent(session)) { e.preventDefault(); e.stopPropagation(); }
 		return;
 	}
-	if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-	const delta = (e.code === "BracketRight" || e.key === "]") ? 1
-		: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
-	if (!delta) return;
+	const { delta, meta, ctrl, alt, shift } = bracketStep(e);
+	if (!delta || meta || ctrl || alt || shift) return;
 	e.preventDefault();
 	e.stopPropagation();
 	enqueue(session, async () => {
@@ -5692,9 +5712,6 @@ function openAnnotate(session) {
 		repaint();
 		retarget();
 	});
-	const bracket = (e) => (e.code === "BracketRight" || e.key === "]") ? 1
-		: (e.code === "BracketLeft" || e.key === "[") ? -1 : 0;
-
 	const onPanelKey = (e) => {
 		const key = e.key;
 		const stop = () => { e.preventDefault(); e.stopPropagation(); };
@@ -5702,16 +5719,17 @@ function openAnnotate(session) {
 		if (key === "Escape") { stop(); closeAnnotate(); return; }
 		// A panel that says why it can do nothing answers to nothing else.
 		if (blocked) { if (key === "Enter") { stop(); closeAnnotate(); } return; }
-		const delta = bracket(e);
+		const b = bracketStep(e);
+		const delta = b.delta;
 		if (delta) {
 			const mac = onMac();
-			const mod = mac ? e.metaKey : e.ctrlKey, other = mac ? e.ctrlKey : e.metaKey;
+			const mod = mac ? b.meta : b.ctrl, other = mac ? b.ctrl : b.meta;
 			if (other) return;
-			if (e.altKey) {
+			if (b.alt) {
 				if (!mod) return;
-				stop(); trimTarget(delta, e.shiftKey); return;
+				stop(); trimTarget(delta, b.shift); return;
 			}
-			if (e.shiftKey) return;
+			if (b.shift) return;
 			stop();
 			if (mod) growTarget(delta); else stepTarget(delta);
 			return;
@@ -6851,7 +6869,7 @@ if (typeof module !== "undefined") {
 		JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 		READ_ALOUD_KEYS, readAloudKeyPressed,
 		growSpan, spanned, looksOf, keptWords, rectsOverlap, trimRun,
-		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, awayText, panelLetter, lookOf,
+		sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, awayText, panelLetter, bracketStep, lookOf,
 		SPOT_LIMIT, SPOT_BYTES, readAloudUnit, placeKey,
 	};
 }

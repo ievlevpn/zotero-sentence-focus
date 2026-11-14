@@ -32,7 +32,7 @@ const {
 	copyKeyPressed, CLICK_MODES, JUMP_KEYS, jumpKeyPressed, TOGGLE_KEYS, toggleKeyPressed,
 	READ_ALOUD_KEYS, readAloudKeyPressed,
 	sessions, spotKey, readSpots, writeSpots, saveSpot, spotFor, bestUnit, SPOT_LIMIT, SPOT_BYTES,
-	readAloudUnit, awayText, panelLetter, lookOf, placeKey,
+	readAloudUnit, awayText, panelLetter, bracketStep, lookOf, placeKey,
 	growSpan, spanned, looksOf, keptWords, rectsOverlap, trimRun,
 } = require("./bootstrap.js");
 
@@ -1861,6 +1861,34 @@ assert.deepStrictEqual(texts([{ text: "We take the limit ... and then stop. Next
 	assert.strictEqual(panelLetter(key("KeyH", "h", { metaKey: true })), null, "⌘H is not a letter for the panel");
 	assert.strictEqual(panelLetter(key("Digit3", "3")), "3");
 	assert.strictEqual(panelLetter(key("KeyQ", "й")), null);
+}
+
+// `[` and `]` by the character they type (#1, #4). A key in the `]` place
+// that types `[` steps back; a German Mac types them with Option-5/6 and a
+// German PC with AltGr-8/9, and the modifier that typed the bracket is not a
+// chord. Only a key that types a non-Latin letter — х and ъ on a Russian
+// layout — is read by its place, as the panel's letters are.
+{
+	const key = (code, k, over) => Object.assign({ code, key: k, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false }, over);
+	const plain = (b) => b.delta && !b.meta && !b.ctrl && !b.alt && !b.shift ? b.delta : 0;
+	assert.strictEqual(plain(bracketStep(key("BracketRight", "]"))), 1);
+	assert.strictEqual(plain(bracketStep(key("BracketLeft", "["))), -1);
+	assert.strictEqual(plain(bracketStep(key("BracketRight", "["))), -1, "the character wins over the place");
+	assert.strictEqual(plain(bracketStep(key("BracketLeft", "]"))), 1);
+	assert.strictEqual(plain(bracketStep(key("Digit5", "[", { altKey: true }))), -1, "Option-5 on a German Mac");
+	assert.strictEqual(plain(bracketStep(key("Digit6", "]", { altKey: true }))), 1, "Option-6 on a German Mac");
+	const altGr = { ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" };
+	assert.strictEqual(plain(bracketStep(key("Digit8", "[", altGr))), -1, "AltGr-8 on a German PC");
+	assert.strictEqual(plain(bracketStep(key("Digit9", "]", { getModifierState: (m) => m === "AltGraph" }))), 1, "AltGr on Linux");
+	assert.strictEqual(plain(bracketStep(key("BracketLeft", "х"))), -1, "Russian layout: х is the `[` key");
+	assert.strictEqual(plain(bracketStep(key("BracketRight", "ъ"))), 1);
+	assert.strictEqual(bracketStep(key("BracketLeft", "ü")).delta, 0, "ü on a German layout is a letter, not a step");
+	assert.strictEqual(bracketStep(key("BracketRight", "+")).delta, 0);
+	assert.strictEqual(bracketStep(key("KeyA", "a")).delta, 0);
+	assert.strictEqual(plain(bracketStep(key("BracketRight", "]", { altKey: true }))), 0, "Alt-] on US is a chord");
+	assert.ok(bracketStep(key("BracketRight", "]", { altKey: true })).alt);
+	const mac = bracketStep(key("Digit6", "]", { altKey: true, metaKey: true }));
+	assert.ok(mac.delta === 1 && mac.meta && !mac.alt, "Cmd-Option-6 is Cmd-] on a German Mac");
 }
 
 // While the panel is open on the ruler's unit, the ruler is drawn as the mark
