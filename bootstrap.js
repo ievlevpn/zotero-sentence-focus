@@ -891,7 +891,7 @@ function detectColumns(lines, viewBox) {
 function cutRegions(ls, pageWidth, depth) {
 	const region = () => [{ left: -Infinity, right: Infinity, top: -Infinity, bottom: Infinity, lines: ls }];
 	if (depth > 5 || ls.length < 6) return region();
-	const v = verticalGutter(ls, pageWidth);
+	const v = verticalGutter(ls, pageWidth, depth);
 	if (v !== null) {
 		const left = ls.filter((l) => centerX(l) < v), right = ls.filter((l) => centerX(l) >= v);
 		return [...cutRegions(left, pageWidth, depth + 1), ...cutRegions(right, pageWidth, depth + 1)];
@@ -905,7 +905,7 @@ function cutRegions(ls, pageWidth, depth) {
 	return region();
 }
 
-function verticalGutter(ls, pageWidth) {
+function verticalGutter(ls, pageWidth, depth = 0) {
 	const left = Math.min(...ls.map((l) => l.rect[0])), right = Math.max(...ls.map((l) => l.rect[2]));
 	const width = right - left;
 	if (width < 0.4 * pageWidth) return null;
@@ -949,7 +949,12 @@ function verticalGutter(ls, pageWidth) {
 		// Enough of it runs its width: a column can hold a table of its own,
 		// but half of a table split down its middle holds almost no long line.
 		const long = side.filter((l) => l.rect[2] - l.rect[0] >= 0.6 * sideWidth).length;
-		if (long < Math.max(3, 0.25 * side.length)) return null;
+		if (long >= Math.max(3, 0.25 * side.length)) continue;
+		// ...unless the side is columns of its own: three columns with a figure
+		// across the first two leave no line on the left running its width but
+		// the caption's, and those columns are found by cutting that side again.
+		if (cutRegions(side, pageWidth, depth + 1).length > 1) continue;
+		return null;
 	}
 	return x;
 }
@@ -3061,6 +3066,8 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 	const blocks = joinContinuations(linesToBlocks(lines, gap, !!opts.mergeDisplay), gap);
 	for (const block of blocks) {
 		const { text, map, lineStarts } = buildBlockText(chars, block.lines);
+		const lineOf = new Map();
+		for (const ln of block.lines) for (let i = ln.from; i <= ln.to; i++) lineOf.set(i, ln);
 		if (!/\p{L}|\p{N}/u.test(text)) continue;
 		const math = map.map((i) => i >= 0 && chars[i].math);
 		// A formula and a table row are each one thing to read, and the full
@@ -3102,9 +3109,24 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 					unit.cut = (x, y) => rangeToUnit(chars, text, map, x, y, block.kind, false, measure, band);
 				}
 				// Reading order is by region, and regions can share an x range — the
-				// left column above a figure and the left column below it.
-				const region = cols.indexOf(block.lines[0] && block.lines[0].col);
-				if (region >= 0) unit.col = region;
+				// left column above a figure and the left column below it. The
+				// region is the one the unit starts in, not its block's: where a
+				// sentence carries on from the foot of one column to the top of
+				// the next the layout puts no paragraph break, and a block can
+				// run through two whole columns (#2). Within its region a unit
+				// goes by the part of it that is there — a sentence starting at
+				// the foot of a column sorts at the foot, not at the top of the
+				// column it ends in.
+				let first = null;
+				for (let k = a; k < b && !first; k++) if (map[k] >= 0) first = lineOf.get(map[k]) || null;
+				const home = (first && first.col) || (block.lines[0] && block.lines[0].col);
+				const region = cols.indexOf(home);
+				if (region >= 0) {
+					unit.col = region;
+					const own = unit.rects.filter((r) => (r[0] + r[2]) / 2 >= home.left && (r[0] + r[2]) / 2 <= home.right
+						&& (r[1] + r[3]) / 2 >= home.bottom && (r[1] + r[3]) / 2 <= home.top);
+					if (own.length) unit.order = Math.max(...own.map((r) => r[3]));
+				}
 				out[g].push(unit);
 			}
 		}
@@ -3112,7 +3134,8 @@ function segmentPage(rawChars, viewBox, opts = {}) {
 	// Reading order: down a column, then on to the next one.
 	for (const g of wanted) {
 		for (const u of out[g]) if (u.col === undefined) u.col = colIndexFor(u.left, cols);
-		out[g].sort((u, v) => (u.col - v.col) || (v.top - u.top));
+		out[g].sort((u, v) => (u.col - v.col) || ((v.order ?? v.top) - (u.order ?? u.top)));
+		for (const u of out[g]) delete u.order;
 	}
 	return out;
 }

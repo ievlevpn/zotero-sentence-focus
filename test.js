@@ -23,7 +23,7 @@
 
 const assert = require("assert");
 const {
-	segmentPage, splitSentences, prevToken, mergeTiny, solidColor, charsToLines, mergeBoxes,
+	detectColumns, segmentPage, splitSentences, prevToken, mergeTiny, solidColor, charsToLines, mergeBoxes,
 	materialize, toPercent, toUserBox, pageAspect, wordRanges, lineRanges,
 	GRANULARITIES, STYLES, CSS, describePage, padBoxes, LIST_LABEL_RE,
 	countRead, eraseCount, showCount,
@@ -297,6 +297,57 @@ assert.deepStrictEqual(texts([{ text: "[12] Smith, J. A. Some paper. J. Algebra 
 		"The first column ends with a clause that continues here at the top of the next column and stops.",
 		"A new one starts.",
 	]);
+}
+
+// --- three columns with a figure across two of them ------------------------
+
+{
+	// Science's layout (#2): three columns, a figure and its caption set across
+	// the first two at the foot, the third running the full height, and a
+	// footer across all three. The gutter right of the second column is clear
+	// once the footer is cut away, but what lies left of it is two columns of
+	// its own — no line there runs its width but the caption's — and it must
+	// still count as text rather than half of a table.
+	const ls = [];
+	const line = (x0, x1, y, text = "words words words words words words") => ls.push({ rect: [x0, y, x1, y + 8], text });
+	for (let y = 708; y >= 321; y -= 10.4) { line(36, 202.3, y); line(214, 380.4, y); }
+	for (let y = 708; y >= 38; y -= 10.4) line(392, 558.4, y);
+	line(538, 577, 728, "REVIEW");
+	line(212, 333, 267, "due to fluid extraction or injection");
+	line(56, 129, 245, "Direct fluid pressure");
+	line(219, 326, 249, "changes in gravitational loading)");
+	for (const y of [200, 176, 146, 122, 106]) { line(60, 120, y, "Fault"); line(139, 196, y, "Increase in pore"); line(290, 360, y, "Change in loading"); }
+	line(36, 380, 59, "Fig. 3. Schematic diagram of mechanisms for inducing earthquakes. Earthquakes may be in-");
+	line(36, 380, 49, "duced by increasing the pore pressure acting on a fault (left) or by changing the shear");
+	line(36, 177, 38, "stress acting on the fault (right). See (4).");
+	line(176, 564, 9, "www.sciencemag.org SCIENCE VOL 341 12 JULY 2013 1225942-3");
+	const cols = detectColumns(ls, [0, 0, 594, 756]);
+	const round = (c) => [Math.round(c.left), Math.round(c.right)];
+	const third = cols.find((c) => c.left >= 390 && c.bottom <= 45);
+	assert.ok(third, `the third column is a region of its own: ${JSON.stringify(cols.map(round))}`);
+	assert.ok(cols.some((c) => c.left <= 36 && c.right <= 203 && c.top >= 700),
+		`and so is the first: ${JSON.stringify(cols.map(round))}`);
+	assert.ok(cols.some((c) => c.left >= 213 && c.right <= 381 && c.top >= 700),
+		`and the second: ${JSON.stringify(cols.map(round))}`);
+}
+
+{
+	// ...and when the layout puts no paragraph break at the foot of the column
+	// (#2), the block runs through both columns. Its sentences still go down
+	// the first column and then the second, and the one that crosses over is
+	// read where it starts.
+	const units = texts([
+		{ text: "Alpha opens the left column of this page here.", x: 60, y: 700 },
+		{ text: "Beta follows on the next line of the column.", x: 60, y: 688 },
+		{ text: "Gamma sits lower down in the left column now.", x: 60, y: 676 },
+		{ text: "Delta starts at the foot of the left column and", x: 60, y: 664 },
+		{ text: "runs on at the head of the right one at last.", x: 330, y: 700 },
+		{ text: "Epsilon is the second sentence of the right one.", x: 330, y: 688 },
+		{ text: "Zeta is the third sentence of the right column.", x: 330, y: 676 },
+		{ text: "Eta closes the right column and the page here.", x: 330, y: 664, para: true },
+	]);
+	assert.deepStrictEqual(units.map((u) => u.split(" ")[0]), ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"],
+		`down one column, then the other: ${JSON.stringify(units)}`);
 }
 
 // --- running heads and page numbers ----------------------------------------
