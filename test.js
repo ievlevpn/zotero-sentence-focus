@@ -1156,8 +1156,10 @@ assert.ok(!LIST_LABEL_RE.test("for X′ 6= X, with the"), "nor ordinary prose");
 		`the whole row is one line: got ${JSON.stringify(alg3)}`);
 	assert.ok(!alg3.includes("Alg. 1"), "and stops at the row above it");
 	assert.ok(units.some((u) => u.includes("Alg. 1") && u.includes("hypothesis")), "as does the row above");
-	// The caption underneath is prose and splits into sentences as prose does.
-	assert.ok(units.some((u) => u === "TABLE 2."), "the caption is read as prose");
+	// The caption underneath is prose and splits into sentences as prose does,
+	// its label reading with the first of them (#3).
+	assert.ok(units.some((u) => u === "TABLE 2. The three chains."),
+		`the caption is read as prose: got ${JSON.stringify(units)}`);
 }
 
 // A row of maths is laid out like a table row but is not one: its pieces carry
@@ -3068,6 +3070,17 @@ assert.deepStrictEqual(texts([{ text: "[GG24] for a general criterion. It is sha
 		`an aside ends where its bracket closes; a journal and its volume stay together: ${JSON.stringify(parts)}`);
 	const ref = "Responses are smaller. Fig. 7 shows the deviations.";
 	assert.strictEqual(splitSentences(ref, [], []).length, 2, "a sentence may still open with Fig. 7");
+	// A caption's label is not a sentence (#3): "Fig. 3." reads with what it
+	// labels, not as a stop of its own.
+	const split = (t) => splitSentences(t, [], []).map(([a, b]) => t.slice(a, b));
+	assert.deepStrictEqual(split("Fig. 3. Schematic diagram of mechanisms. Earthquakes may be induced."),
+		["Fig. 3. Schematic diagram of mechanisms.", "Earthquakes may be induced."]);
+	assert.deepStrictEqual(split("Table 2. Results of the runs. More follows."),
+		["Table 2. Results of the runs.", "More follows."]);
+	assert.deepStrictEqual(split("FIGURE S4. Phase portrait. Next."), ["FIGURE S4. Phase portrait.", "Next."]);
+	assert.deepStrictEqual(split("Рис. 2. Схема установки. Далее."), ["Рис. 2. Схема установки.", "Далее."]);
+	assert.deepStrictEqual(split("The same holds, see Fig. 3. The model works."),
+		["The same holds, see Fig. 3.", "The model works."], "a reference that ends a sentence still ends it");
 }
 
 // --- what the audit turned up ----------------------------------------------

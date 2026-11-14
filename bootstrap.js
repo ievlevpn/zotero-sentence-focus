@@ -2631,8 +2631,15 @@ function splitSentences(text, math, lineStarts) {
 	}
 	if (start < text.length && /\S/.test(text.slice(start))) out.push([start, text.length]);
 	if (!out.length) return [[0, text.length]];
+	// A caption's label — "Fig. 3.", "Table 2." — is not a sentence of its
+	// own: it reads with the sentence it labels.
+	for (let k = out.length - 2; k >= 0; k--) {
+		if (CAPTION_LABEL_RE.test(text.slice(out[k][0], out[k][1]))) out.splice(k, 2, [out[k][0], out[k + 1][1]]);
+	}
 	return mergeTiny(text, out);
 }
+
+const CAPTION_LABEL_RE = /^\s*(?:fig(?:ure)?s?|tab(?:le)?|scheme|chart|plate|algorithm|listing|box|exhibit|рис(?:унок)?|табл(?:ица)?)\.?\s*(?:[a-z]{0,2}\d+(?:[.-]\d+)*[a-z]?|[ivxlc]+)[.:]\s*$/iu;
 
 // A fragment with nothing to read in it — a stray ")." left by a bad guess
 // upstream — belongs to its neighbour rather than being a stop of its own.
